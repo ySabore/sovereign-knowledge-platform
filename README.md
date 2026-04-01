@@ -29,6 +29,8 @@ Private, multi-tenant RAG for SMEs. Planning truth lives in OpenClaw `workspace-
 
 ## Quick start (local API)
 
+Requires **Docker Desktop** (or compatible engine) for Postgres/Redis, and **Python 3.11+** on `PATH`.
+
 ```powershell
 cd C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform
 copy .env.example .env
@@ -41,8 +43,10 @@ python scripts/seed.py
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-- Docs: http://127.0.0.1:8000/docs  
+- API docs (Swagger): http://127.0.0.1:8000/docs  
 - Health: http://127.0.0.1:8000/health  
+
+**Smoke check:** `POST /auth/login` with `SEED_PLATFORM_OWNER_EMAIL` / `SEED_PLATFORM_OWNER_PASSWORD` from `.env`, then `GET /auth/me` with `Authorization: Bearer <token>`. Platform owner can `POST /organizations` to create an org (creator becomes `org_owner` on that org).
 
 ## Environment
 
