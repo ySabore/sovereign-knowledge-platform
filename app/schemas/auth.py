@@ -27,6 +27,11 @@ class OrganizationCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=128, description="URL-safe slug, lowercase recommended")
 
 
+class OrganizationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    status: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 class OrganizationPublic(BaseModel):
     id: UUID
     name: str
@@ -38,6 +43,11 @@ class OrganizationPublic(BaseModel):
 
 class WorkspaceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+
+
+class WorkspaceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
 
 

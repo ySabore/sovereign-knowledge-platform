@@ -16,16 +16,17 @@ Private, multi-tenant RAG for SMEs. Planning truth lives in OpenClaw `workspace-
 | Packaging | Docker Compose |
 | MVP1 ingestion | PDF-only first |
 
-## Phase 1 status (backend foundation)
+## Phase 1–2 status (backend foundation)
 
 - [x] Repo scaffold, config, Docker Compose (Postgres + Redis)
 - [x] SQLAlchemy models: users, organizations, memberships, workspaces, workspace_members
 - [x] Alembic migration
 - [x] `POST /auth/login`, `GET /auth/me`, JWT dependency
-- [x] `POST /organizations` (platform owner), `GET /organizations/me`
+- [x] `POST /organizations`, `GET /organizations/me`, `GET /organizations/{org_id}`, `PATCH /organizations/{org_id}`
+- [x] `POST /workspaces/org/{org_id}`, `GET /workspaces/org/{org_id}`, `GET /workspaces/me`, `GET /workspaces/{workspace_id}`, `PATCH /workspaces/{workspace_id}`
 - [x] Seed script for platform owner (dev)
 
-**Exit criteria:** login works; protected routes enforced; org/workspace entities persist. *(API completion for org/workspace CRUD continues in Phase 2.)*
+**Exit criteria:** login works; protected routes enforced; org/workspace entities persist; owners/admins can inspect and update their org/workspace metadata.
 
 ## Quick start (local API)
 
@@ -46,7 +47,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - API docs (Swagger): http://127.0.0.1:8000/docs  
 - Health: http://127.0.0.1:8000/health  
 
-**Smoke check:** `POST /auth/login` with `SEED_PLATFORM_OWNER_EMAIL` / `SEED_PLATFORM_OWNER_PASSWORD` from `.env`, then `GET /auth/me` with `Authorization: Bearer <token>`. Platform owner can `POST /organizations` to create an org (creator becomes `org_owner` on that org).
+**Smoke check:** `POST /auth/login` with `SEED_PLATFORM_OWNER_EMAIL` / `SEED_PLATFORM_OWNER_PASSWORD` from `.env`, then `GET /auth/me` with `Authorization: Bearer <token>`. Platform owner can `POST /organizations` to create an org (creator becomes `org_owner` on that org), `POST /workspaces/org/{org_id}` to create a workspace, then use the new read/update endpoints for org/workspace metadata.
 
 ## Environment
 
