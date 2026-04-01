@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: skp
+      POSTGRES_PASSWORD: skp
+      POSTGRES_DB: skp
+    ports:
+      - "5433:5432"
+    volumes:
+      - skp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skp -d skp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - skp_redis:/data
+
+volumes:
+  skp_pgdata:
+  skp_redis:
