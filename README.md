@@ -24,9 +24,12 @@ Private, multi-tenant RAG for SMEs. Planning truth lives in OpenClaw `workspace-
 - [x] `POST /auth/login`, `GET /auth/me`, JWT dependency
 - [x] `POST /organizations`, `GET /organizations/me`, `GET /organizations/{org_id}`, `PATCH /organizations/{org_id}`
 - [x] `POST /workspaces/org/{org_id}`, `GET /workspaces/org/{org_id}`, `GET /workspaces/me`, `GET /workspaces/{workspace_id}`, `PATCH /workspaces/{workspace_id}`
+- [x] Membership management for existing users: `GET/PUT/DELETE /organizations/{org_id}/members`, `GET/PUT/DELETE /workspaces/{workspace_id}/members`
 - [x] Seed script for platform owner (dev)
+- [x] Phase-3 core ORM entities added: `ingestion_jobs`, `documents`, `document_chunks`, `chat_sessions`, `chat_messages`, `audit_logs`
+- [x] Audit log writes added for sensitive org/workspace/member mutations
 
-**Exit criteria:** login works; protected routes enforced; org/workspace entities persist; owners/admins can inspect and update their org/workspace metadata.
+**Exit criteria:** login works; protected routes enforced; org/workspace entities persist; owners/admins can inspect and update their org/workspace metadata; org owners and workspace admins can assign existing users to the right tenant/workspace scope.
 
 ## Quick start (local API)
 
@@ -44,10 +47,21 @@ python scripts/seed.py
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+If an existing virtualenv was created before the bcrypt/passlib compatibility fix, refresh it first:
+
+```powershell
+pip uninstall -y bcrypt
+pip install -r requirements.txt
+```
+
 - API docs (Swagger): http://127.0.0.1:8000/docs  
 - Health: http://127.0.0.1:8000/health  
 
-**Smoke check:** `POST /auth/login` with `SEED_PLATFORM_OWNER_EMAIL` / `SEED_PLATFORM_OWNER_PASSWORD` from `.env`, then `GET /auth/me` with `Authorization: Bearer <token>`. Platform owner can `POST /organizations` to create an org (creator becomes `org_owner` on that org), `POST /workspaces/org/{org_id}` to create a workspace, then use the new read/update endpoints for org/workspace metadata.
+**Smoke check:** `POST /auth/login` with `SEED_PLATFORM_OWNER_EMAIL` / `SEED_PLATFORM_OWNER_PASSWORD` from `.env`, then `GET /auth/me` with `Authorization: Bearer <token>`. Platform owner can `POST /organizations` to create an org (creator becomes `org_owner` on that org), `POST /workspaces/org/{org_id}` to create a workspace, then use `PUT /organizations/{org_id}/members` and `PUT /workspaces/{workspace_id}/members` to assign existing users by email. `DELETE /organizations/{org_id}/members/{user_id}` and `DELETE /workspaces/{workspace_id}/members/{user_id}` now support removal while protecting the last org owner / workspace admin from accidental eviction.
+
+## Current repo milestone
+
+The repo now has the persistence-layer substrate for ingestion/chat and auditability, but it still needs the next Alembic migration applied before those new tables exist in the database. After migration, the next pilot step is a PDF upload endpoint that creates `documents` + `ingestion_jobs` records behind a clean storage/parser interface.
 
 ## Environment
 

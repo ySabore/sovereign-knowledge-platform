@@ -58,3 +58,29 @@ class WorkspacePublic(BaseModel):
     description: str | None
 
     model_config = {"from_attributes": True}
+
+
+class OrganizationMemberUpsert(BaseModel):
+    email: EmailStr
+    role: str = Field(default="member", min_length=1, max_length=32)
+
+
+class OrganizationMemberPublic(BaseModel):
+    user_id: UUID
+    organization_id: UUID
+    email: str
+    full_name: str | None
+    role: str
+
+
+class WorkspaceMemberUpsert(BaseModel):
+    email: EmailStr
+    role: str = Field(default="member", min_length=1, max_length=32)
+
+
+class WorkspaceMemberPublic(BaseModel):
+    user_id: UUID
+    workspace_id: UUID
+    email: str
+    full_name: str | None
+    role: str
