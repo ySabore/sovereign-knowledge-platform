@@ -9,6 +9,7 @@ from app.deps import get_current_user, require_platform_owner
 from app.models import (
     AuditAction,
     AuditLog,
+    ChatSession,
     Organization,
     OrganizationMembership,
     OrgMembershipRole,
@@ -18,6 +19,7 @@ from app.models import (
     WorkspaceMember,
     WorkspaceMemberRole,
 )
+from app.services.billing import ensure_seat_available
 from app.schemas.auth import (
     OrganizationCreate,
     OrganizationMemberPublic,
@@ -33,6 +35,9 @@ from app.schemas.auth import (
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 router_w = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+DEFAULT_WORKSPACE_NAME = "General"
+DEFAULT_WORKSPACE_DESCRIPTION = "Default workspace created with the organization."
 
 
 def _get_org_membership(db: Session, org_id: UUID, user_id: UUID) -> OrganizationMembership | None:
@@ -53,7 +58,9 @@ def _require_org_membership(db: Session, org_id: UUID, user: User) -> Organizati
     return membership
 
 
-def _require_org_owner(db: Session, org_id: UUID, user: User) -> OrganizationMembership:
+def _require_org_owner(db: Session, org_id: UUID, user: User) -> OrganizationMembership | None:
+    if user.is_platform_owner:
+        return None
     membership = _require_org_membership(db, org_id, user)
     if membership.role != OrgMembershipRole.org_owner.value:
         raise HTTPException(status_code=403, detail="Org owner role required")
@@ -101,9 +108,11 @@ def _get_workspace_for_user(db: Session, workspace_id: UUID, user_id: UUID) -> W
 
 
 def _require_workspace_admin(db: Session, workspace_id: UUID, user: User) -> Workspace:
-    workspace = _get_workspace_for_user(db, workspace_id, user.id)
+    workspace = db.get(Workspace, workspace_id) if user.is_platform_owner else _get_workspace_for_user(db, workspace_id, user.id)
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    if user.is_platform_owner:
+        return workspace
     membership = (
         db.query(WorkspaceMember)
         .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id)
@@ -183,6 +192,34 @@ def create_organization(
             role=OrgMembershipRole.org_owner.value,
         )
     )
+
+    # Always provision a default workspace and membership so every org starts usable.
+    ws = Workspace(
+        organization_id=org.id,
+        name=DEFAULT_WORKSPACE_NAME,
+        description=DEFAULT_WORKSPACE_DESCRIPTION,
+        created_by=owner.id,
+    )
+    db.add(ws)
+    db.flush()
+    db.add(
+        WorkspaceMember(
+            workspace_id=ws.id,
+            user_id=owner.id,
+            role=WorkspaceMemberRole.workspace_admin.value,
+        )
+    )
+    # Create an initial chat session for the creator in the default workspace.
+    # Note: chat sessions are per-user in the current model.
+    db.add(
+        ChatSession(
+            organization_id=org.id,
+            workspace_id=ws.id,
+            user_id=owner.id,
+            title="General",
+        )
+    )
+
     _write_audit_log(
         db,
         actor_user_id=owner.id,
@@ -191,6 +228,26 @@ def create_organization(
         target_id=org.id,
         organization_id=org.id,
         metadata={"slug": org.slug, "status": org.status},
+    )
+    _write_audit_log(
+        db,
+        actor_user_id=owner.id,
+        action=AuditAction.workspace_created.value,
+        target_type="workspace",
+        target_id=ws.id,
+        organization_id=org.id,
+        workspace_id=ws.id,
+        metadata={"name": ws.name},
+    )
+    _write_audit_log(
+        db,
+        actor_user_id=owner.id,
+        action=AuditAction.workspace_member_upserted.value,
+        target_type="workspace_member",
+        target_id=owner.id,
+        organization_id=org.id,
+        workspace_id=ws.id,
+        metadata={"role": WorkspaceMemberRole.workspace_admin.value},
     )
     db.commit()
     db.refresh(org)
@@ -230,7 +287,7 @@ def list_organization_members(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[OrganizationMemberPublic]:
-    _require_org_membership(db, org_id, user)
+    _require_org_owner(db, org_id, user)
     memberships = (
         db.query(OrganizationMembership)
         .join(User, User.id == OrganizationMembership.user_id)
@@ -257,6 +314,7 @@ def upsert_organization_member(
     target_user = _get_active_user_by_email(db, body.email)
     membership = _get_org_membership(db, org_id, target_user.id)
     if membership is None:
+        ensure_seat_available(db, org_id)
         membership = OrganizationMembership(
             user_id=target_user.id,
             organization_id=org_id,
@@ -265,6 +323,38 @@ def upsert_organization_member(
         db.add(membership)
     else:
         membership.role = normalized_role
+
+    # Ensure all org members have access to the default workspace (if present).
+    default_ws = (
+        db.query(Workspace)
+        .filter(Workspace.organization_id == org_id, Workspace.name == DEFAULT_WORKSPACE_NAME)
+        .one_or_none()
+    )
+    if default_ws is not None:
+        desired_ws_role = (
+            WorkspaceMemberRole.workspace_admin.value
+            if normalized_role == OrgMembershipRole.org_owner.value
+            else WorkspaceMemberRole.member.value
+        )
+        ws_membership = (
+            db.query(WorkspaceMember)
+            .filter(
+                WorkspaceMember.workspace_id == default_ws.id,
+                WorkspaceMember.user_id == target_user.id,
+            )
+            .one_or_none()
+        )
+        if ws_membership is None:
+            db.add(
+                WorkspaceMember(
+                    workspace_id=default_ws.id,
+                    user_id=target_user.id,
+                    role=desired_ws_role,
+                )
+            )
+        else:
+            ws_membership.role = desired_ws_role
+            db.add(ws_membership)
 
     db.flush()
     _write_audit_log(
@@ -425,9 +515,7 @@ def list_workspace_members(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[WorkspaceMemberPublic]:
-    workspace = _get_workspace_for_user(db, workspace_id, user.id)
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    workspace = _require_workspace_admin(db, workspace_id, user)
 
     memberships = (
         db.query(WorkspaceMember)
