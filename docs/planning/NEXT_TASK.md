@@ -1,18 +1,34 @@
-# NEXT_TASK.md
+# NEXT_TASK.md — Sovereign Knowledge Platform
 
-**Date:** 2026-04-03
-**Top task:** Execute and capture Phase 1 runtime proof in `C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform` before any further feature work.
+_Last updated: 2026-04-09 18:57 America/New_York_
 
-## Required steps
-1. Obtain approval or direct terminal access for repo commands.
-2. Start infrastructure with `docker compose up -d` and confirm Postgres is healthy.
-3. Run `alembic upgrade head`.
-4. Run `python scripts/seed.py`.
-5. Verify `GET /health`, `POST /auth/login`, and `GET /auth/me`.
-6. Record exact outcomes in `memory/2026-04-03.md` and update `BLOCKERS.md` immediately with real runtime evidence.
+## Current next task
+Verify the frontend handles the backend contract correctly and complete browser-backed validation of the `/organizations` flow.
 
-## Guardrail
-Do **not** begin Phase 2 implementation until Phase 1 verification is captured with evidence.
+## Background
+- Docker is now the canonical deployment path.
+- RBAC member-list restrictions are in place.
+- Demo smoke passes end-to-end on Docker stack.
+- Frontend may expect `/admin/*` endpoints; need to confirm graceful degradation or add guards.
 
-## Key risk to watch
-Approval-gated repo access is still the immediate delivery risk; secondary risks are Docker Desktop readiness, Python runtime availability, and migration/DB connectivity failures.
+## Definition of done
+- Log in successfully with seeded accounts (org-admin, ws-admin, org-member, ws-member)
+- For each role, verify under `/organizations`:
+  - organization list visibility
+  - workspace list visibility
+  - workspace chat opens correctly
+  - member-management surfaces respect RBAC (non-admins should not see full member lists)
+  - any admin panels degrade gracefully if backend endpoints unavailable
+- Capture exact failures with route, role, UI surface
+- End with ranked fix order
+
+## Why this comes first
+Fresh backend smoke proof is complete on Docker. Remaining demo risk is frontend contract alignment and graceful handling of backend endpoint availability.
+
+## Immediate execution notes
+1. Treat `data/smoke/E2E_CHAT_SMOKE_2026-04-09.json` as backend proof already complete.
+2. Prioritize `/organizations` over `/admin` routes.
+3. Use the seeded role accounts, not only `owner@example.com`, so RBAC and non-owner behavior are exercised.
+4. Assume the running backend shape is authoritative for debugging the current live stack.
+5. If a page depends on `/admin/documents/{org_id}` or `/admin/metrics/summary`, log the mismatch explicitly instead of hand-waving it.
+6. After the frontend pass, open a separate investigation into Forge reliability after the model change.

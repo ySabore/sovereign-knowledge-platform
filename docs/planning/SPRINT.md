@@ -1,147 +1,83 @@
 # SPRINT.md — Sovereign Knowledge Platform
 
-**Standup date:** 2026-04-02 (America/New_York)  
-**Sprint window:** week of **2026-04-07**
+_Last updated: 2026-04-09 16:00 America/New_York_
 
-## Sprint goal
+## Sprint Goal
+Stabilize and package the already-proven SKP demo path on the current repo state: auth, org/workspace setup, PDF ingestion, retrieval-grounded chat, and demo-ready UI/ops surfaces.
 
-Turn **Sovereign Knowledge Platform (SKP)** planning into **verified execution**: complete local Phase 1 validation and unblock Phase 2 implementation in the product repo.
+## Reconciled current state
 
-## Canonical docs (read before coding)
+### What is materially true now
+- The backend foundation is no longer hypothetical. `docs/planning/RUNTIME_VERIFICATION_2026-04-03.md` records successful migration connectivity, seed, `/health`, `/auth/login`, and `/auth/me` proof.
+- The core ingestion → retrieval → chat lane is also already proven historically. `docs/planning/E2E_CHAT_SMOKE_2026-04-03.md` records a successful live smoke run including upload, indexing, retrieval hit, grounded cited answer, exact no-evidence fallback, persistence checks, and workspace isolation.
+- Since then, the repo expanded substantially:
+  - production-shaped runtime config, logging, request ID middleware, security headers, rate limiting, health/readiness/AI readiness
+  - richer domain schema and migrations through billing, RBAC/document permissions, ingestion metadata, connectors, and query logs
+  - additional API surfaces for billing, connectors, admin metrics, public config, Clerk JWT support, Stripe/Clerk webhooks, and SSE chat aliasing
+  - React + Vite frontend with landing page, dashboard, workspace chat, admin views, Clerk pages, and built static assets under `frontend/dist`
+  - Docker packaging for prod and GPU-first local deployment plus smoke/setup scripts
+- Validation run today: `python -m unittest discover -s tests -v` passed with **24/24 tests green**.
 
-| Order | File | Purpose |
-|-------|------|---------|
-| 1 | `PRODUCT_REQUIREMENTS.md` | MVP1 scope, roles, isolation, fallback text |
-| 2 | `MVP_IMPLEMENTATION_PLAN.md` | Default build phases (0 → 8) |
-| 3 | `DELIVERY_SPEC.md` | Non-negotiable OpenClaw / Forge checklist |
-| 4 | `ARCHITECTURE.md` | Technical stack and decisions |
-| 5 | `SOURCES.md` | Lineage from `Downloads\SME-RAG` |
+## What changed today
+- Backend surface expanded beyond the earlier MVP lane: billing routes, connector activation/sync endpoints, SSE chat aliasing, Clerk JWT support, request limiting, structured logging, middleware, and additional migrations for RBAC, billing, ingestion metadata, and query logs are now in the tree.
+- Frontend moved into a more complete React + Vite app shape with Clerk-aware bootstrapping, stronger landing/dashboard flows, admin navigation, analytics views, billing/team/connectors pages, and shared chat/layout components.
+- Packaging and deployment assets were added or widened: `Dockerfile`, `docker-compose.prod.yml`, `docker-compose.gpu.yml`, deploy docs/assets, smoke scripts, seeding helpers, and runtime configuration docs.
+- No new commits were recorded since `2026-04-08 06:00`; tonight's state is still a broad local working tree rather than reviewable committed slices.
+- A fresh verification pass tonight reconfirmed `python -m unittest discover -s tests -v` at **24/24 green**.
 
-Repo target: `C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform`
+## What is not yet freshly re-proven on today's code
+- External integration paths (Stripe, Nango/connectors, Clerk webhook handling) are present but not proven live in repo evidence.
+- Full trustworthy browser-path verification of the Vite UI against the current backend is still not captured.
+- The exact `/organizations` behavior across seeded non-owner roles is not yet recorded as a completed artifact.
 
----
+## Active risks
+- **Regression risk after large surface expansion:** mitigated by fresh Docker smoke proof on 2026-04-09 — upload, indexing, retrieval, grounded cited answer, exact no-hit fallback, and workspace isolation verified.
+- **Uncommitted breadth risk:** many tracked and untracked files are in flight at once, which raises review, rollback, and packaging risk.
+- **Frontend integration confidence gap:** the Vite UI is live, but a trustworthy browser-backed `/organizations` pass is still incomplete.
+- **Frontend/backend contract drift risk:** the running API has `/admin/*` endpoints in code but may need UI guards for graceful degradation.
+- **External integration proof gap:** Stripe, Clerk, and connector plumbing exist in code, but live integration evidence is still missing.
 
-## Current focus
+## Task status
+- [x] Re-scan repo and reconcile actual implementation state against stale architect docs.
+- [x] Confirm current automated validation signal, `python -m unittest discover -s tests -v` passed 24/24 tests on 2026-04-08.
+- [x] Reconfirm tonight that the same test suite still passes 24/24 on the current working tree.
+- [x] Refresh planning docs to match the current implementation direction and risk posture.
+- [x] Expand backend surface for billing, connectors, runtime/config middleware, and chat/API integration paths.
+- [x] Expand frontend surface for React + Vite app shell, admin flows, analytics/dashboard pages, and Clerk-aware bootstrapping.
+- [x] Add production/GPU packaging assets, deployment docs, seed/smoke helpers, and related repo scaffolding.
+- [x] Run daily standup review against current sprint, roadmap, and blockers docs.
+- [x] Re-run the live smoke lane on the current repo state and save a fresh dated artifact.
+- [x] Tighten RBAC for org/workspace membership visibility (commit `615897a`).
+- [x] Make Docker the canonical deployment and validation path (commit `7fdf62e`).
+- [ ] Complete a trustworthy browser-backed verification of `/organizations` across seeded org/workspace admin/member roles.
+- [ ] Verify frontend gracefully handles any admin endpoint contract gaps.
+- [ ] Clean up repo hygiene around generated artifacts and commit boundaries.
+- [ ] Re-prove or trim external integration paths before relying on them in a client demo.
 
-- **Primary:** Verify **Phase 1 on hardware** — Postgres running, migrations applied, seed executed, login verified.
-- **Secondary:** Hold Phase 2 implementation until runtime proof exists.
+## Recommended next sequence
+1. ~~Re-run the live smoke lane on the current repo state and save a fresh dated artifact.~~ — Completed 2026-04-09.
+2. ~~Complete the `/organizations`-first frontend verification across seeded non-owner roles and log exact failures.~~ — Deferred; focus on backend contract alignment first.
+3. Resolve the current frontend/backend contract drift around missing `/admin/*` endpoints or guard those surfaces properly.
+4. Decide and tighten intended RBAC behavior for org membership visibility.
+5. Split the broad local working tree into reviewable commit slices and clean up generated artifacts, including `dist` output.
+6. Investigate Forge reliability after the model change before depending on it for future critical verification work.
 
----
+## Afternoon plan (2026-04-09)
+1. **Backend contract alignment** — Add missing `/admin/documents/{org_id}` and `/admin/metrics/summary` endpoints OR add proper UI guards/fallbacks where those routes are expected.
+2. **RBAC tightening** — Review and fix org membership visibility to restrict reads to appropriate roles only.
+3. **Repo hygiene** — Commit the working tree changes in reviewable slices; separate generated artifacts from source changes.
+4. **Frontend verification prep** — Once backend contract is aligned, run browser-backed verification of the `/organizations` flow.
+5. **External integration triage** — Document which external paths (Stripe, Clerk webhooks, Nango) are demo-critical vs future work.
 
-## Done
+## Current proven state
+- Unit tests: 24/24 passing (includes new RBAC regression test).
+- Integration smoke test: `scripts/e2e_chat_smoke.py` executed successfully via Docker on 2026-04-09.
+- Smoke wrapper: `scripts/demo_chat_smoke.ps1` now Docker-first.
+- Smoke artifacts: `data/smoke/E2E_CHAT_SMOKE_docker_verified.json`
+- Docker stack: `docker-compose.gpu.yml` is canonical for 5090 deployment.
+- Verified: login, org/workspace creation, PDF upload/indexing, grounded cited answer, exact no-hit fallback ("I don't know based on the documents in this workspace."), workspace isolation, RBAC member-list restrictions.
 
-- [x] Workspace bootstrap / Forge operating base
-- [x] Core identity files (`SOUL.md`, `AGENTS.md`, `TOOLS.md`, `IDENTITY.md`)
-- [x] Baseline `ARCHITECTURE.md`, `ROADMAP.md`, `PROJECT_RULES.md`
-- [x] Absorb `Downloads\SME-RAG` into `PRODUCT_REQUIREMENTS.md`, `MVP_IMPLEMENTATION_PLAN.md`, `DELIVERY_SPEC.md`, `SOURCES.md`
-- [x] Rename product to **Sovereign Knowledge Platform** across architect + `shared/` docs
-- [x] Workspace setup marker in `.openclaw/workspace-state.json` (2026-04-01)
-- [x] Git repo created: `C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform`
-- [x] Phase 0 decisions recorded in repo `README.md` + `docs/DECISIONS.md`
-- [x] Phase 1 scaffold exists: FastAPI app, SQLAlchemy models, Alembic migration `001`, JWT auth, `/auth/login`, `/auth/me`, org + workspace routes, `scripts/seed.py`, Docker Compose for Postgres+Redis
-- [x] Repo quick-start and local runtime prerequisites clarified in `README.md`
-- [x] Organization and workspace management APIs expanded in `app/routers/organizations.py`
-- [x] Auth schemas extended to support expanded org/workspace API responses
-- [x] Repo decision log updated to reflect Phase 1 / pre-Phase 2 implementation progress
-- [x] Repo-local `SPRINT.md` removed to keep sprint tracking centralized in the architect workspace
-- [x] Daily standup note created for 2026-04-01
-- [x] Daily standup note created for 2026-04-02
-- [x] End-of-day sprint status captured for 2026-04-02
-
----
-
-## In progress
-
-- [ ] Start Postgres via Docker Compose on a dev machine
-- [ ] Run `alembic upgrade head`
-- [ ] Run `python scripts/seed.py`
-- [ ] Verify `GET /health`, `POST /auth/login`, and `/auth/me`
-- [ ] Capture proof of validation in memory or repo docs
-
----
-
-## Standup status update — 2026-04-02 16:27 ET
-
-### On track
-- Planning remains coherent.
-- Roadmap milestones remain consistent.
-- Milestone A / Phase 1 runtime proof is still the correct immediate gating milestone.
-- No product-scope decision blocker has emerged.
-
-### Stalled
-- No runtime verification evidence has been added since the 16:00 check.
-- Phase 1 still cannot be marked complete.
-- Phase 2 remains paused pending runtime proof.
-- Approval-gated repo execution is still slowing validation from this session.
-
-### Immediate next tasks
-1. Obtain approval or direct execution path for repo verification commands.
-2. Run `docker compose up -d` in `C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform`.
-3. Run `alembic upgrade head` and `python scripts/seed.py`.
-4. Verify `GET /health`, `POST /auth/login`, and `GET /auth/me`.
-5. Record exact evidence in `memory/2026-04-02.md` and update blockers immediately.
-
----
-
-## End-of-day update — 2026-04-02 20:00 ET
-
-### What was built / confirmed today
-- Sprint tracking, blockers, and daily notes were kept current in the architect workspace.
-- The product plan remains stable: Phase 1 runtime proof is still the active gate; no roadmap reshuffle is needed.
-- No new product-repo implementation or runtime verification evidence was captured from this session.
-
-### End-of-day state
-- Phase 1 remains **unverified** on hardware.
-- Phase 2 remains **paused intentionally** until runtime proof exists.
-- Repo inspection and runtime commands are still blocked by approval from this architect session.
-
-### Tomorrow's first move
-1. Unblock repo command execution.
-2. Run local Phase 1 verification in the product repo.
-3. Capture exact outcomes in memory and blockers before any new feature work.
-
----
-
-## Risks
-
-- **Execution stall risk:** planning is ahead of proof.
-- **Repo command execution is still approval-gated** from this architect session.
-- **Docker/Python runtime readiness remains unknown** on the current machine.
-- **Tenant isolation** remains the highest product risk and must be reviewed in every retrieval and membership path.
-- **Phase 2 work is at risk of expanding on unverified foundations**.
-
----
-
-## Success criteria (current)
-
-- [x] Product repo exists.
-- [x] Phase 0 decisions documented.
-- [x] Daily note exists for 2026-04-01.
-- [x] Daily note written for 2026-04-02.
-- [ ] Phase 1 verified locally with DB up, migrations applied, seed user created, login confirmed.
-- [ ] `BLOCKERS.md` reflects any environment/runtime issues found during verification.
-
----
-
-## Repo execution update — 2026-04-02 late validation pass
-
-### Additional progress captured in repo execution
-- Tenant-safe membership management is now in place for existing users, including removal endpoints and last-owner / last-admin safeguards.
-- Core phase-3 ORM entities were added in code for ingestion, retrieval/chat persistence, and audit logging.
-- Sensitive org/workspace/member mutations now write audit-log records in the API layer.
-
-### Remaining gaps vs delivery
-- missing user invitation/bootstrap flow for membership assignment; current membership APIs assume the user already exists.
-- audit-log persistence is coded but still needs migration/runtime validation against a live DB.
-- missing PDF upload, ingestion pipeline, indexing status, retrieval, citations, exact fallback behavior, and isolation tests.
-- missing frontend MVP.
-
-### Immediate execution target
-1. complete the DB migration slice for the new phase-3 models
-2. apply it locally and verify startup against the migrated schema
-3. build the first PDF upload + job-creation endpoint on top of that schema
-
-### Runtime validation finding
-- Docker/compose bring-up passed.
-- The first concrete runtime failure was in the seed path at passlib/bcrypt password hashing compatibility.
-- The repo fix path identified was to constrain bcrypt compatibility and rerun the local validation flow.
+## Standup note
+- Tonight's standup did not uncover a new decision blocker for King.
+- The highest-value unresolved work remains verification and repo hygiene, not architecture churn.
+- ROADMAP location confirmed at `docs/product/ROADMAP.md`; sprint assumptions should keep using that path unless planning docs are reorganized.
