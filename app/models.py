@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.database import Base
 
@@ -59,6 +60,10 @@ class AuditAction(str, enum.Enum):
     workspace_updated = "workspace_updated"
     workspace_member_upserted = "workspace_member_upserted"
     workspace_member_removed = "workspace_member_removed"
+    organization_invite_sent = "organization_invite_sent"
+    organization_invite_resent = "organization_invite_resent"
+    organization_invite_revoked = "organization_invite_revoked"
+    organization_invite_accepted = "organization_invite_accepted"
 
 
 class User(Base):
@@ -66,6 +71,7 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    clerk_user_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -88,10 +94,56 @@ class Organization(Base):
     slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     tenant_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default=OrgStatus.active.value)
+    plan: Mapped[str] = mapped_column(
+        String(32),
+        default="free_trial",
+        doc="free | starter | team | business | scale | admin — drives entitlements and rate limits",
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    billing_grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clerk_organization_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="organization")
     workspaces: Mapped[list[Workspace]] = relationship(back_populates="organization")
+    connector_registrations: Mapped[list["OrganizationConnector"]] = relationship(back_populates="organization")
+    integration_connectors: Mapped[list["IntegrationConnector"]] = relationship(back_populates="organization")
+
+
+class OrganizationConnector(Base):
+    """Registered connector integrations per org (for plan limit: max connectors)."""
+
+    __tablename__ = "organization_connectors"
+    __table_args__ = (UniqueConstraint("organization_id", "integration_key", name="uq_org_connector_integration"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"))
+    integration_key: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    organization: Mapped[Organization] = relationship(back_populates="connector_registrations")
+
+
+class IntegrationConnector(Base):
+    """Nango-backed integration (Layer 5 Connector) — one row per org + connector_type."""
+
+    __tablename__ = "connectors"
+    __table_args__ = (UniqueConstraint("organization_id", "connector_type", name="uq_connectors_org_type"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"))
+    connector_type: Mapped[str] = mapped_column(String(128))
+    nango_connection_id: Mapped[str] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document_count: Mapped[int] = mapped_column(Integer, default=0)
+    config: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    organization: Mapped[Organization] = relationship(back_populates="integration_connectors")
+    documents: Mapped[list["Document"]] = relationship(back_populates="integration_connector")
 
 
 class OrganizationMembership(Base):
@@ -108,6 +160,23 @@ class OrganizationMembership(Base):
     organization: Mapped[Organization] = relationship(back_populates="memberships")
 
 
+class OrganizationInvite(Base):
+    __tablename__ = "organization_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[str] = mapped_column(String(32), default=OrgMembershipRole.member.value)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    invite_token_hash: Mapped[str] = mapped_column(String(128), index=True)
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    accepted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
 
@@ -122,6 +191,7 @@ class Workspace(Base):
     members: Mapped[list[WorkspaceMember]] = relationship(back_populates="workspace")
     documents: Mapped[list[Document]] = relationship(back_populates="workspace")
     chat_sessions: Mapped[list[ChatSession]] = relationship(back_populates="workspace")
+    query_logs: Mapped[list["QueryLog"]] = relationship(back_populates="workspace")
 
 
 class WorkspaceMember(Base):
@@ -166,15 +236,45 @@ class Document(Base):
     content_type: Mapped[str] = mapped_column(String(128), default="application/pdf")
     storage_path: Mapped[str] = mapped_column(String(1024))
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), default="pdf-upload", index=True)
+    external_id: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
+    source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    ingestion_metadata: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    integration_connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(32), default=DocumentStatus.uploaded.value)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     workspace: Mapped[Workspace] = relationship(back_populates="documents")
+    integration_connector: Mapped[IntegrationConnector | None] = relationship(back_populates="documents")
     created_by_user: Mapped[User | None] = relationship(back_populates="created_documents")
     ingestion_job: Mapped[IngestionJob | None] = relationship(back_populates="documents")
     chunks: Mapped[list[DocumentChunk]] = relationship(back_populates="document")
+    permissions: Mapped[list["DocumentPermission"]] = relationship(back_populates="document")
+
+
+class DocumentPermission(Base):
+    """Per-document ACL synced from connectors (full RBAC) or created for uploads."""
+
+    __tablename__ = "document_permissions"
+    __table_args__ = (UniqueConstraint("document_id", "source", "external_id", name="uq_document_permission_source_ext"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    can_read: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(64))
+    external_id: Mapped[str] = mapped_column(String(512))
+    connector_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    document: Mapped[Document] = relationship(back_populates="permissions")
 
 
 class DocumentChunk(Base):
@@ -184,10 +284,11 @@ class DocumentChunk(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"))
     chunk_index: Mapped[int] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
@@ -222,6 +323,27 @@ class ChatMessage(Base):
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
     user: Mapped[User | None] = relationship(back_populates="chat_messages")
+
+
+class QueryLog(Base):
+    """Layer 5 Query model — audit trail for RAG turns (optional analytics)."""
+
+    __tablename__ = "query_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citations_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="query_logs")
 
 
 class AuditLog(Base):

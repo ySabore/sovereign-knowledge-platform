@@ -1,4 +1,6 @@
 import secrets
+import hashlib
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +14,7 @@ from app.models import (
     ChatSession,
     Organization,
     OrganizationMembership,
+    OrganizationInvite,
     OrgMembershipRole,
     OrgStatus,
     User,
@@ -24,6 +27,10 @@ from app.schemas.auth import (
     OrganizationCreate,
     OrganizationMemberPublic,
     OrganizationMemberUpsert,
+    OrganizationInviteAcceptRequest,
+    OrganizationInviteCreate,
+    OrganizationInviteIssueResponse,
+    OrganizationInvitePublic,
     OrganizationPublic,
     OrganizationUpdate,
     WorkspaceCreate,
@@ -38,6 +45,7 @@ router_w = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 DEFAULT_WORKSPACE_NAME = "General"
 DEFAULT_WORKSPACE_DESCRIPTION = "Default workspace created with the organization."
+INVITE_TTL_DAYS = 7
 
 
 def _get_org_membership(db: Session, org_id: UUID, user_id: UUID) -> OrganizationMembership | None:
@@ -96,6 +104,59 @@ def _serialize_workspace_member(membership: WorkspaceMember) -> WorkspaceMemberP
         full_name=membership.user.full_name,
         role=membership.role,
     )
+
+
+def _serialize_org_invite(invite: OrganizationInvite) -> OrganizationInvitePublic:
+    return OrganizationInvitePublic(
+        id=invite.id,
+        organization_id=invite.organization_id,
+        email=invite.email,
+        role=invite.role,
+        status=invite.status,
+        expires_at=invite.expires_at,
+        accepted_at=invite.accepted_at,
+        created_at=invite.created_at,
+    )
+
+
+def _issue_invite_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return token, token_hash
+
+
+def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_id: UUID, org_role: str) -> None:
+    default_ws = (
+        db.query(Workspace)
+        .filter(Workspace.organization_id == org_id, Workspace.name == DEFAULT_WORKSPACE_NAME)
+        .one_or_none()
+    )
+    if default_ws is None:
+        return
+    desired_ws_role = (
+        WorkspaceMemberRole.workspace_admin.value
+        if org_role == OrgMembershipRole.org_owner.value
+        else WorkspaceMemberRole.member.value
+    )
+    ws_membership = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == default_ws.id,
+            WorkspaceMember.user_id == target_user_id,
+        )
+        .one_or_none()
+    )
+    if ws_membership is None:
+        db.add(
+            WorkspaceMember(
+                workspace_id=default_ws.id,
+                user_id=target_user_id,
+                role=desired_ws_role,
+            )
+        )
+    else:
+        ws_membership.role = desired_ws_role
+        db.add(ws_membership)
 
 
 def _get_workspace_for_user(db: Session, workspace_id: UUID, user_id: UUID) -> Workspace | None:
@@ -268,6 +329,214 @@ def list_my_organizations(
     return list(q.all())
 
 
+@router.get("/{org_id}/invites", response_model=list[OrganizationInvitePublic])
+def list_organization_invites(
+    org_id: UUID,
+    status_filter: str | None = "pending",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[OrganizationInvitePublic]:
+    _require_org_owner(db, org_id, user)
+    q = db.query(OrganizationInvite).filter(OrganizationInvite.organization_id == org_id)
+    if status_filter:
+        q = q.filter(OrganizationInvite.status == status_filter)
+    rows = q.order_by(OrganizationInvite.created_at.desc()).all()
+    return [_serialize_org_invite(r) for r in rows]
+
+
+@router.post("/{org_id}/invites", response_model=OrganizationInviteIssueResponse, status_code=status.HTTP_201_CREATED)
+def create_organization_invite(
+    org_id: UUID,
+    body: OrganizationInviteCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> OrganizationInviteIssueResponse:
+    _require_org_owner(db, org_id, user)
+    normalized_role = body.role.strip().lower()
+    allowed_roles = {role.value for role in OrgMembershipRole}
+    if normalized_role not in allowed_roles:
+        raise HTTPException(status_code=422, detail=f"Invalid role. Allowed: {sorted(allowed_roles)}")
+
+    normalized_email = body.email.strip().lower()
+    existing_user = db.query(User).filter(User.email == normalized_email).one_or_none()
+    if existing_user:
+        existing_membership = _get_org_membership(db, org_id, existing_user.id)
+        if existing_membership is not None:
+            raise HTTPException(status_code=409, detail="User is already an organization member")
+
+    token, token_hash = _issue_invite_token()
+    invite = (
+        db.query(OrganizationInvite)
+        .filter(
+            OrganizationInvite.organization_id == org_id,
+            OrganizationInvite.email == normalized_email,
+            OrganizationInvite.status == "pending",
+        )
+        .order_by(OrganizationInvite.created_at.desc())
+        .first()
+    )
+    action = AuditAction.organization_invite_sent.value
+    if invite is None:
+        invite = OrganizationInvite(
+            organization_id=org_id,
+            email=normalized_email,
+            role=normalized_role,
+            status="pending",
+            invite_token_hash=token_hash,
+            invited_by_user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS),
+        )
+        db.add(invite)
+    else:
+        action = AuditAction.organization_invite_resent.value
+        invite.role = normalized_role
+        invite.invite_token_hash = token_hash
+        invite.invited_by_user_id = user.id
+        invite.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
+        invite.status = "pending"
+        invite.accepted_at = None
+        invite.accepted_by_user_id = None
+
+    db.flush()
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=action,
+        target_type="organization_invite",
+        target_id=invite.id,
+        organization_id=org_id,
+        metadata={"email": normalized_email, "role": normalized_role, "expires_at": invite.expires_at.isoformat()},
+    )
+    db.commit()
+    db.refresh(invite)
+    return OrganizationInviteIssueResponse(invite=_serialize_org_invite(invite), invite_token=token)
+
+
+@router.post("/{org_id}/invites/{invite_id}/resend", response_model=OrganizationInviteIssueResponse)
+def resend_organization_invite(
+    org_id: UUID,
+    invite_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> OrganizationInviteIssueResponse:
+    _require_org_owner(db, org_id, user)
+    invite = (
+        db.query(OrganizationInvite)
+        .filter(OrganizationInvite.id == invite_id, OrganizationInvite.organization_id == org_id)
+        .one_or_none()
+    )
+    if invite is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite.status != "pending":
+        raise HTTPException(status_code=409, detail="Only pending invites can be resent")
+
+    token, token_hash = _issue_invite_token()
+    invite.invite_token_hash = token_hash
+    invite.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
+    invite.invited_by_user_id = user.id
+    db.flush()
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=AuditAction.organization_invite_resent.value,
+        target_type="organization_invite",
+        target_id=invite.id,
+        organization_id=org_id,
+        metadata={"email": invite.email, "role": invite.role},
+    )
+    db.commit()
+    db.refresh(invite)
+    return OrganizationInviteIssueResponse(invite=_serialize_org_invite(invite), invite_token=token)
+
+
+@router.delete("/{org_id}/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_organization_invite(
+    org_id: UUID,
+    invite_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    _require_org_owner(db, org_id, user)
+    invite = (
+        db.query(OrganizationInvite)
+        .filter(OrganizationInvite.id == invite_id, OrganizationInvite.organization_id == org_id)
+        .one_or_none()
+    )
+    if invite is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite.status != "pending":
+        raise HTTPException(status_code=409, detail="Only pending invites can be revoked")
+    invite.status = "revoked"
+    db.flush()
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=AuditAction.organization_invite_revoked.value,
+        target_type="organization_invite",
+        target_id=invite.id,
+        organization_id=org_id,
+        metadata={"email": invite.email},
+    )
+    db.commit()
+
+
+@router.post("/invites/accept", response_model=OrganizationMemberPublic)
+def accept_organization_invite(
+    body: OrganizationInviteAcceptRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> OrganizationMemberPublic:
+    token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    invite = (
+        db.query(OrganizationInvite)
+        .filter(
+            OrganizationInvite.invite_token_hash == token_hash,
+            OrganizationInvite.status == "pending",
+        )
+        .one_or_none()
+    )
+    if invite is None:
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+
+    now = datetime.now(timezone.utc)
+    if invite.expires_at < now:
+        invite.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=410, detail="Invite has expired")
+    if invite.email.lower() != user.email.lower():
+        raise HTTPException(status_code=403, detail="Invite email does not match current user")
+
+    membership = _get_org_membership(db, invite.organization_id, user.id)
+    if membership is None:
+        ensure_seat_available(db, invite.organization_id)
+        membership = OrganizationMembership(
+            user_id=user.id,
+            organization_id=invite.organization_id,
+            role=invite.role,
+        )
+        db.add(membership)
+    else:
+        membership.role = invite.role
+    _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
+
+    invite.status = "accepted"
+    invite.accepted_by_user_id = user.id
+    invite.accepted_at = now
+    db.flush()
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=AuditAction.organization_invite_accepted.value,
+        target_type="organization_invite",
+        target_id=invite.id,
+        organization_id=invite.organization_id,
+        metadata={"email": invite.email, "role": invite.role},
+    )
+    db.commit()
+    db.refresh(membership)
+    return _serialize_org_member(membership)
+
+
 @router.get("/{org_id}", response_model=OrganizationPublic)
 def get_organization(
     org_id: UUID,
@@ -324,37 +593,7 @@ def upsert_organization_member(
     else:
         membership.role = normalized_role
 
-    # Ensure all org members have access to the default workspace (if present).
-    default_ws = (
-        db.query(Workspace)
-        .filter(Workspace.organization_id == org_id, Workspace.name == DEFAULT_WORKSPACE_NAME)
-        .one_or_none()
-    )
-    if default_ws is not None:
-        desired_ws_role = (
-            WorkspaceMemberRole.workspace_admin.value
-            if normalized_role == OrgMembershipRole.org_owner.value
-            else WorkspaceMemberRole.member.value
-        )
-        ws_membership = (
-            db.query(WorkspaceMember)
-            .filter(
-                WorkspaceMember.workspace_id == default_ws.id,
-                WorkspaceMember.user_id == target_user.id,
-            )
-            .one_or_none()
-        )
-        if ws_membership is None:
-            db.add(
-                WorkspaceMember(
-                    workspace_id=default_ws.id,
-                    user_id=target_user.id,
-                    role=desired_ws_role,
-                )
-            )
-        else:
-            ws_membership.role = desired_ws_role
-            db.add(ws_membership)
+    _ensure_default_workspace_membership(db, org_id, target_user.id, normalized_role)
 
     db.flush()
     _write_audit_log(
