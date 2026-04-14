@@ -3,10 +3,11 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.deps import get_current_user, require_platform_owner
 from app.models import (
     AuditAction,
@@ -23,6 +24,9 @@ from app.models import (
     WorkspaceMemberRole,
 )
 from app.services.billing import ensure_seat_available
+from app.services.field_encryption import encrypt_org_secret
+from app.services.resource_cleanup import delete_organization_cascade, delete_workspace_cascade
+from app.services.workspace_access import resolve_workspace_for_user
 from app.schemas.auth import (
     OrganizationCreate,
     OrganizationMemberPublic,
@@ -59,17 +63,32 @@ def _get_org_membership(db: Session, org_id: UUID, user_id: UUID) -> Organizatio
     )
 
 
-def _require_org_membership(db: Session, org_id: UUID, user: User) -> OrganizationMembership:
+def _require_org_membership(
+    db: Session,
+    org_id: UUID,
+    user: User,
+    *,
+    allow_platform_owner_bypass: bool = True,
+) -> OrganizationMembership | None:
+    """
+    Require org membership, or (for the signed-in platform owner only) allow access to any org that exists.
+    Use allow_platform_owner_bypass=False when validating another user (e.g. workspace invitee) who must be a member.
+    """
     membership = _get_org_membership(db, org_id, user.id)
-    if membership is None:
-        raise HTTPException(status_code=403, detail="Not a member of this organization")
-    return membership
+    if membership is not None:
+        return membership
+    if allow_platform_owner_bypass and user.is_platform_owner:
+        org = db.get(Organization, org_id)
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return None
+    raise HTTPException(status_code=403, detail="Not a member of this organization")
 
 
 def _require_org_owner(db: Session, org_id: UUID, user: User) -> OrganizationMembership | None:
     if user.is_platform_owner:
         return None
-    membership = _require_org_membership(db, org_id, user)
+    membership = _require_org_membership(db, org_id, user, allow_platform_owner_bypass=False)
     if membership.role != OrgMembershipRole.org_owner.value:
         raise HTTPException(status_code=403, detail="Org owner role required")
     return membership
@@ -159,17 +178,8 @@ def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_
         db.add(ws_membership)
 
 
-def _get_workspace_for_user(db: Session, workspace_id: UUID, user_id: UUID) -> Workspace | None:
-    return (
-        db.query(Workspace)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .filter(Workspace.id == workspace_id, WorkspaceMember.user_id == user_id)
-        .one_or_none()
-    )
-
-
 def _require_workspace_admin(db: Session, workspace_id: UUID, user: User) -> Workspace:
-    workspace = db.get(Workspace, workspace_id) if user.is_platform_owner else _get_workspace_for_user(db, workspace_id, user.id)
+    workspace = resolve_workspace_for_user(db, workspace_id, user)
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
     if user.is_platform_owner:
@@ -320,6 +330,12 @@ def list_my_organizations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Organization]:
+    if user.is_platform_owner:
+        rows = list(db.query(Organization).order_by(Organization.created_at.asc()).all())
+        allow = settings.platform_owner_visible_org_slug_set()
+        if allow is not None:
+            rows = [o for o in rows if o.slug.lower() in allow]
+        return rows
     q = (
         db.query(Organization)
         .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
@@ -622,14 +638,82 @@ def update_organization(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    if body.name is not None:
-        org.name = body.name.strip()
-    if body.status is not None:
-        normalized_status = body.status.strip().lower()
+    patch = body.model_dump(exclude_unset=True)
+    cloud_llm_owner_fields = {
+        "openai_api_key",
+        "anthropic_api_key",
+        "openai_api_base_url",
+        "anthropic_api_base_url",
+    }
+    if cloud_llm_owner_fields.intersection(patch.keys()) and not user.is_platform_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the platform owner can configure cloud LLM credentials for this organization.",
+        )
+
+    if "name" in patch and patch["name"] is not None:
+        org.name = patch["name"].strip()
+    if "status" in patch and patch["status"] is not None:
+        normalized_status = patch["status"].strip().lower()
         allowed_statuses = {status.value for status in OrgStatus}
         if normalized_status not in allowed_statuses:
             raise HTTPException(status_code=422, detail=f"Invalid status. Allowed: {sorted(allowed_statuses)}")
         org.status = normalized_status
+    if "description" in patch:
+        raw_desc = patch["description"]
+        org.description = (raw_desc or "").strip() or None
+    if "preferred_chat_provider" in patch:
+        raw = patch["preferred_chat_provider"]
+        if raw is None:
+            org.preferred_chat_provider = None
+        else:
+            s = str(raw).strip().lower()
+            if s in ("", "inherit", "platform", "default"):
+                org.preferred_chat_provider = None
+            elif s in ("extractive", "ollama", "openai", "anthropic"):
+                org.preferred_chat_provider = s
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Invalid preferred_chat_provider. Use extractive, ollama, openai, anthropic, "
+                        "or null for platform default."
+                    ),
+                )
+    if "preferred_chat_model" in patch:
+        raw_m = patch["preferred_chat_model"]
+        org.preferred_chat_model = (raw_m or "").strip() or None
+
+    if "openai_api_key" in patch:
+        raw_key = patch["openai_api_key"]
+        if raw_key is None or (isinstance(raw_key, str) and not str(raw_key).strip()):
+            org.openai_api_key_encrypted = None
+        else:
+            try:
+                org.openai_api_key_encrypted = encrypt_org_secret(str(raw_key))
+            except RuntimeError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Server is not configured to store organization API keys (set ORG_LLM_FERNET_KEY).",
+                ) from None
+    if "anthropic_api_key" in patch:
+        raw_key = patch["anthropic_api_key"]
+        if raw_key is None or (isinstance(raw_key, str) and not str(raw_key).strip()):
+            org.anthropic_api_key_encrypted = None
+        else:
+            try:
+                org.anthropic_api_key_encrypted = encrypt_org_secret(str(raw_key))
+            except RuntimeError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Server is not configured to store organization API keys (set ORG_LLM_FERNET_KEY).",
+                ) from None
+    if "openai_api_base_url" in patch:
+        raw_u = patch["openai_api_base_url"]
+        org.openai_api_base_url = None if raw_u is None else (str(raw_u).strip() or None)
+    if "anthropic_api_base_url" in patch:
+        raw_u = patch["anthropic_api_base_url"]
+        org.anthropic_api_base_url = None if raw_u is None else (str(raw_u).strip() or None)
 
     _write_audit_log(
         db,
@@ -638,11 +722,50 @@ def update_organization(
         target_type="organization",
         target_id=org.id,
         organization_id=org.id,
-        metadata={"name": org.name, "status": org.status},
+        metadata={
+            "name": org.name,
+            "status": org.status,
+            "has_description": org.description is not None,
+            "preferred_chat_provider": org.preferred_chat_provider,
+        },
     )
     db.commit()
     db.refresh(org)
     return org
+
+
+@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_organization_endpoint(
+    org_id: UUID,
+    confirm_slug: str = Query(
+        ...,
+        min_length=1,
+        description="Must match the organization URL slug (case-insensitive). Deletes all workspaces, documents, chats, and connectors under this org.",
+    ),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Org owners and platform owners. Removes stored PDF files, then deletes the org row (DB CASCADE for related data)."""
+    _require_org_owner(db, org_id, user)
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    if confirm_slug.strip().lower() != org.slug.strip().lower():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="confirm_slug must match the organization slug",
+        )
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=AuditAction.organization_deleted.value,
+        target_type="organization",
+        target_id=org.id,
+        organization_id=org.id,
+        metadata={"name": org.name, "slug": org.slug},
+    )
+    delete_organization_cascade(db, org.id)
+    db.commit()
 
 
 @router.delete("/{org_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -742,7 +865,7 @@ def get_workspace(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Workspace:
-    workspace = _get_workspace_for_user(db, workspace_id, user.id)
+    workspace = resolve_workspace_for_user(db, workspace_id, user)
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
     return workspace
@@ -780,7 +903,7 @@ def upsert_workspace_member(
         raise HTTPException(status_code=422, detail=f"Invalid role. Allowed: {sorted(allowed_roles)}")
 
     target_user = _get_active_user_by_email(db, body.email)
-    _require_org_membership(db, workspace.organization_id, target_user)
+    _require_org_membership(db, workspace.organization_id, target_user, allow_platform_owner_bypass=False)
     membership = (
         db.query(WorkspaceMember)
         .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == target_user.id)
@@ -837,6 +960,50 @@ def update_workspace(
     db.commit()
     db.refresh(workspace)
     return workspace
+
+
+@router_w.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace_endpoint(
+    workspace_id: UUID,
+    confirm_name: str = Query(
+        ...,
+        min_length=1,
+        description="Must match the workspace name exactly (trimmed). Removes indexed documents, chats, and stored files for this workspace.",
+    ),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    workspace = db.get(Workspace, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    _require_org_owner(db, workspace.organization_id, user)
+    if confirm_name.strip() != workspace.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="confirm_name must match the workspace name exactly",
+        )
+    n_ws = (
+        db.query(Workspace)
+        .filter(Workspace.organization_id == workspace.organization_id)
+        .count()
+    )
+    if n_ws <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete the last workspace in this organization",
+        )
+    _write_audit_log(
+        db,
+        actor_user_id=user.id,
+        action=AuditAction.workspace_deleted.value,
+        target_type="workspace",
+        target_id=workspace.id,
+        organization_id=workspace.organization_id,
+        workspace_id=workspace.id,
+        metadata={"name": workspace.name},
+    )
+    delete_workspace_cascade(db, workspace_id)
+    db.commit()
 
 
 @router_w.delete("/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -64,6 +64,11 @@ class AuditAction(str, enum.Enum):
     organization_invite_resent = "organization_invite_resent"
     organization_invite_revoked = "organization_invite_revoked"
     organization_invite_accepted = "organization_invite_accepted"
+    organization_deleted = "organization_deleted"
+    workspace_deleted = "workspace_deleted"
+    document_deleted = "document_deleted"
+    chat_session_deleted = "chat_session_deleted"
+    connector_deleted = "connector_deleted"
 
 
 class User(Base):
@@ -104,6 +109,21 @@ class Organization(Base):
     billing_grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     clerk_organization_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preferred_chat_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    preferred_chat_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    openai_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    anthropic_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    openai_api_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    anthropic_api_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    @property
+    def openai_api_key_configured(self) -> bool:
+        return bool((self.openai_api_key_encrypted or "").strip())
+
+    @property
+    def anthropic_api_key_configured(self) -> bool:
+        return bool((self.anthropic_api_key_encrypted or "").strip())
 
     memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="organization")
     workspaces: Mapped[list[Workspace]] = relationship(back_populates="organization")

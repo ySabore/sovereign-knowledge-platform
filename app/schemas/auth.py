@@ -35,6 +35,17 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     status: str | None = Field(default=None, min_length=1, max_length=32)
+    description: str | None = Field(default=None, max_length=16_000)
+    preferred_chat_provider: str | None = Field(
+        default=None,
+        description="extractive | ollama | openai | anthropic | null/empty for platform default",
+        max_length=32,
+    )
+    preferred_chat_model: str | None = Field(default=None, max_length=128)
+    openai_api_key: str | None = Field(default=None, max_length=512, description="Write-only; platform owner only")
+    anthropic_api_key: str | None = Field(default=None, max_length=512, description="Write-only; platform owner only")
+    openai_api_base_url: str | None = Field(default=None, max_length=512)
+    anthropic_api_base_url: str | None = Field(default=None, max_length=512)
 
 
 class OrganizationPublic(BaseModel):
@@ -43,6 +54,13 @@ class OrganizationPublic(BaseModel):
     slug: str
     status: str
     plan: str = "free_trial"
+    description: str | None = None
+    preferred_chat_provider: str | None = None
+    preferred_chat_model: str | None = None
+    openai_api_key_configured: bool = False
+    anthropic_api_key_configured: bool = False
+    openai_api_base_url: str | None = None
+    anthropic_api_base_url: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -256,6 +274,13 @@ class ChatTurnResponse(BaseModel):
     session: ChatSessionPublic
     user_message: ChatMessagePublic
     assistant_message: ChatMessagePublic
+    generation_mode: str = Field(
+        description="Debug mode used for answer generation: ollama | ollama_fallback_extractive | extractive | no_evidence"
+    )
+    generation_model: str | None = Field(
+        default=None,
+        description="Debug model label used for answer generation (e.g., qwen3:32b, extractive).",
+    )
 
 
 class ChatSessionDetailResponse(BaseModel):
