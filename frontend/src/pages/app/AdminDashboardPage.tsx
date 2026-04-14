@@ -15,6 +15,7 @@ import { AdminTopbar } from "../../components/AdminTopbar";
 import { AdminPermissionGuard } from "../../components/AdminPermissionGuard";
 import { RequireAdmin } from "../../components/RequireAdmin";
 import { useAuth } from "../../context/AuthContext";
+import { usePlatformNavigation } from "../../context/PlatformNavigationContext";
 
 type Summary = {
   totals: {
@@ -65,6 +66,7 @@ function exportUnansweredCsv(rows: Summary["unanswered_queries"]) {
 
 export function AdminDashboardPage() {
   const { user } = useAuth();
+  const { activeOrganizationId, enterOrganization, exitToPlatform } = usePlatformNavigation();
   const [data, setData] = useState<Summary | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"frequency" | "avg_confidence" | "last_asked">("frequency");
@@ -86,6 +88,12 @@ export function AdminDashboardPage() {
       setScopeOrgId(user.org_ids_as_owner[0] ?? null);
     }
   }, [user]);
+
+  /** Keep admin analytics scope aligned with global org context for platform owners. */
+  useEffect(() => {
+    if (!user?.is_platform_owner) return;
+    setScopeOrgId(activeOrganizationId);
+  }, [user, activeOrganizationId]);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -153,7 +161,14 @@ export function AdminDashboardPage() {
                 className="sk-input"
                 style={{ maxWidth: 320 }}
                 value={scopeOrgId ?? ""}
-                onChange={(e) => setScopeOrgId(e.target.value || null)}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  setScopeOrgId(v);
+                  if (user?.is_platform_owner) {
+                    if (v) enterOrganization(v);
+                    else exitToPlatform();
+                  }
+                }}
               >
                 <option value="">All organizations</option>
                 {orgs.map((o) => (

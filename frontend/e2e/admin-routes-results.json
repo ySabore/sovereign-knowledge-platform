@@ -1,0 +1,76 @@
+{
+  "timestamp": "2026-04-09T05:14:40.540Z",
+  "testType": "admin-routes-verification",
+  "results": [
+    {
+      "route": "/admin",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/documents",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/team",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/billing",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/audit",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/settings",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    },
+    {
+      "route": "/admin/connectors",
+      "status": "PASS",
+      "loadsWithoutError": true,
+      "showsContent": true,
+      "notes": [
+        "Navigated to: http://127.0.0.1:5173/home"
+      ],
+      "errors": []
+    }
+  ]
+}

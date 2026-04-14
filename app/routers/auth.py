@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.auth.security import create_access_token, verify_password
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import User
+from app.models import OrganizationMembership, OrgMembershipRole, User
 from app.schemas.auth import LoginRequest, TokenResponse, UserPublic
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -22,5 +22,20 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
 
 
 @router.get("/me", response_model=UserPublic)
-def me(user: User = Depends(get_current_user)) -> User:
-    return user
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserPublic:
+    owner_rows = (
+        db.query(OrganizationMembership.organization_id)
+        .filter(
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.role == OrgMembershipRole.org_owner.value,
+        )
+        .all()
+    )
+    org_ids_as_owner = [row[0] for row in owner_rows]
+    return UserPublic(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_platform_owner=user.is_platform_owner,
+        org_ids_as_owner=org_ids_as_owner,
+    )

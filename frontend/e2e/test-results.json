@@ -1,0 +1,77 @@
+{
+  "timestamp": "2026-04-09T05:04:13.061Z",
+  "results": [
+    {
+      "account": "ORG_ADMIN",
+      "status": "PASS",
+      "loginSuccess": true,
+      "orgPageLoad": true,
+      "orgListVisible": true,
+      "workspaceListVisible": true,
+      "canEnterWorkspace": false,
+      "notes": [
+        "Login successful",
+        "Organizations page loaded",
+        "Organization list/content visible",
+        "Workspace list/content visible",
+        "Team management features visible: Members, Team",
+        "Admin features visible: Documents"
+      ],
+      "errors": []
+    },
+    {
+      "account": "WORKSPACE_ADMIN",
+      "status": "PASS",
+      "loginSuccess": true,
+      "orgPageLoad": true,
+      "orgListVisible": true,
+      "workspaceListVisible": true,
+      "canEnterWorkspace": false,
+      "notes": [
+        "Login successful",
+        "Organizations page loaded",
+        "Organization list/content visible",
+        "Workspace list/content visible",
+        "Team management features visible: Members, Team",
+        "Admin features visible: Documents"
+      ],
+      "errors": []
+    },
+    {
+      "account": "ORG_MEMBER",
+      "status": "PASS",
+      "loginSuccess": true,
+      "orgPageLoad": true,
+      "orgListVisible": true,
+      "workspaceListVisible": true,
+      "canEnterWorkspace": false,
+      "notes": [
+        "Login successful",
+        "Organizations page loaded",
+        "Organization list/content visible",
+        "Workspace list/content visible",
+        "Team management features visible: Members, Team",
+        "Admin features visible: Documents"
+      ],
+      "errors": []
+    },
+    {
+      "account": "WORKSPACE_MEMBER",
+      "status": "PASS",
+      "loginSuccess": true,
+      "orgPageLoad": true,
+      "orgListVisible": true,
+      "workspaceListVisible": true,
+      "canEnterWorkspace": false,
+      "notes": [
+        "Login successful",
+        "Organizations page loaded",
+        "Organization list/content visible",
+        "Workspace list/content visible",
+        "Team management features visible: Members, Team",
+        "Admin features visible: Documents"
+      ],
+      "errors": []
+    }
+  ]
+}

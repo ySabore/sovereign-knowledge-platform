@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-04-09T05:06:31.492Z",
+  "testType": "workspace-access",
+  "results": [
+    {
+      "account": "ORG_ADMIN",
+      "status": "PARTIAL",
+      "canAccessWorkspacesNav": true,
+      "workspacesListVisible": true,
+      "canOpenWorkspace": false,
+      "chatInterfaceLoads": false,
+      "notes": [
+        "Workspaces nav item visible",
+        "Clicked Workspaces nav",
+        "Workspaces list/content visible"
+      ],
+      "errors": []
+    },
+    {
+      "account": "WORKSPACE_ADMIN",
+      "status": "PARTIAL",
+      "canAccessWorkspacesNav": true,
+      "workspacesListVisible": true,
+      "canOpenWorkspace": false,
+      "chatInterfaceLoads": false,
+      "notes": [
+        "Workspaces nav item visible",
+        "Clicked Workspaces nav",
+        "Workspaces list/content visible"
+      ],
+      "errors": []
+    },
+    {
+      "account": "ORG_MEMBER",
+      "status": "PARTIAL",
+      "canAccessWorkspacesNav": true,
+      "workspacesListVisible": true,
+      "canOpenWorkspace": false,
+      "chatInterfaceLoads": false,
+      "notes": [
+        "Workspaces nav item visible",
+        "Clicked Workspaces nav",
+        "Workspaces list/content visible"
+      ],
+      "errors": []
+    },
+    {
+      "account": "WORKSPACE_MEMBER",
+      "status": "PARTIAL",
+      "canAccessWorkspacesNav": true,
+      "workspacesListVisible": true,
+      "canOpenWorkspace": false,
+      "chatInterfaceLoads": false,
+      "notes": [
+        "Workspaces nav item visible",
+        "Clicked Workspaces nav",
+        "Workspaces list/content visible"
+      ],
+      "errors": []
+    }
+  ]
+}

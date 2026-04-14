@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Knowledge Assistant — Enterprise UI Screens</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07090F;--bg-s:#0C0F1A;--bg-e:#111827;--bg-card:#0F1420;
+  --accent:#2563EB;--ah:#1d4fd8;--ag:rgba(37,99,235,0.18);
+  --gold:#F59E0B;--green:#10B981;--red:#EF4444;--purple:#8B5CF6;
+  --t1:#EEF2FF;--t2:#94A3B8;--t3:#3D4A5C;
+  --bd:rgba(255,255,255,0.07);--bd2:rgba(255,255,255,0.13);
+  --serif:"Instrument Serif",Georgia,serif;
+  --sans:"DM Sans",sans-serif;
+  --mono:"JetBrains Mono",monospace;
+}
+body{background:#030508;font-family:var(--sans);overflow-x:hidden}
+.shell{display:flex;height:100vh}
+
+/* ─ LEFT NAV ─ */
+.lnav{width:205px;flex-shrink:0;background:#030508;border-right:1px solid rgba(255,255,255,0.05);padding:18px 0;display:flex;flex-direction:column;overflow-y:auto}
+.lnav-logo{padding:0 14px 16px;border-bottom:1px solid rgba(255,255,255,0.05);margin-bottom:7px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--t1)}
+.lnav-icon{width:24px;height:24px;background:var(--accent);border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.lnav-icon svg{width:13px;height:13px;fill:white}
+.lnav-group{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);padding:10px 14px 4px}
+.lnav-btn{display:flex;align-items:center;gap:8px;padding:7px 14px;font-size:12px;font-weight:500;color:var(--t2);cursor:pointer;border:none;background:none;width:100%;text-align:left;font-family:var(--sans);transition:all .13s}
+.lnav-btn:hover{color:var(--t1);background:rgba(255,255,255,0.04)}
+.lnav-btn.on{color:var(--t1);background:rgba(37,99,235,0.14);border-right:2px solid var(--accent)}
+
+/* ─ SCREENS ─ */
+.screens{flex:1;overflow-y:auto}
+.scr{display:none;min-height:100vh}
+.scr.on{display:block}
+
+/* ─ APP CHROME ─ */
+.frame{display:grid;grid-template-columns:210px 1fr;grid-template-rows:50px 1fr;height:100vh;background:var(--bg)}
+.topbar{grid-column:1/-1;background:var(--bg-s);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 16px;gap:12px}
+.tlogo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--t1);min-width:148px}
+.ticon{width:24px;height:24px;background:var(--accent);border-radius:5px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 12px var(--ag)}
+.ticon svg{width:13px;height:13px;fill:white}
+.tmid{flex:1}
+.tright{margin-left:auto;display:flex;align-items:center;gap:10px}
+.av{width:27px;height:27px;border-radius:50%;background:linear-gradient(135deg,#2563EB,#7C3AED);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;cursor:pointer;flex-shrink:0}
+.sidebar{background:var(--bg-s);border-right:1px solid var(--bd);padding:9px 0;display:flex;flex-direction:column;gap:1px;overflow-y:auto}
+.sg{padding:11px 13px 4px;font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
+.si{display:flex;align-items:center;gap:8px;padding:6px 13px;font-size:12px;font-weight:500;color:var(--t2);cursor:pointer;transition:all .12s}
+.si:hover{color:var(--t1);background:rgba(255,255,255,0.04)}
+.si.on{color:var(--t1);background:rgba(37,99,235,0.12);border-right:2px solid var(--accent)}
+.si svg{width:13px;height:13px;flex-shrink:0;opacity:.7}
+.si.on svg{opacity:1}
+.sbadge{margin-left:auto;font-size:9px;font-weight:700;padding:1px 6px;border-radius:100px;color:white}
+.mc{overflow-y:auto;background:var(--bg)}
+
+/* ─ COMMON ─ */
+.ph{padding:22px 22px 16px;border-bottom:1px solid var(--bd)}
+.ptitle{font-family:var(--serif);font-size:21px;font-weight:400;color:var(--t1);margin-bottom:2px}
+.psub{font-size:11px;color:var(--t2)}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;border:none;font-family:var(--sans);transition:all .14s}
+.bp{background:var(--accent);color:white;box-shadow:0 0 16px var(--ag)}
+.bp:hover{background:var(--ah)}
+.bg{background:transparent;color:var(--t2);border:1px solid var(--bd2)}
+.bg:hover{color:var(--t1)}
+.bdanger{background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.25)}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:600}
+.bgreen{background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.25)}
+.bblue{background:rgba(37,99,235,0.12);color:#60a5fa;border:1px solid rgba(37,99,235,0.25)}
+.bamber{background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.25)}
+.bred{background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2)}
+.bgray{background:rgba(148,163,184,0.08);color:var(--t2);border:1px solid var(--bd)}
+.conf-hi{color:var(--green);display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600}
+.conf-hi::before{content:"";width:5px;height:5px;background:var(--green);border-radius:50%}
+.conf-md{color:var(--gold);display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600}
+.conf-md::before{content:"";width:5px;height:5px;background:var(--gold);border-radius:50%}
+</style>
+
+<style>
+/* ─ CHAT ─ */
+.chat-frame{display:grid;grid-template-columns:210px 1fr 295px;grid-template-rows:50px 1fr;height:100vh;background:var(--bg)}
+.csb{background:var(--bg-s);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
+.csb-top{padding:12px}
+.newchat{width:100%;display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border-radius:7px;background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+.hlist{flex:1;overflow-y:auto;padding:5px}
+.hi{padding:7px 9px;border-radius:6px;cursor:pointer;margin-bottom:1px}
+.hi:hover{background:rgba(255,255,255,0.04)}
+.hi.on{background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.2)}
+.hi-q{font-size:11px;font-weight:500;color:var(--t1);line-height:1.4;margin-bottom:2px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hi-m{font-size:10px;color:var(--t3)}
+.cmain{display:flex;flex-direction:column;overflow:hidden}
+.msgs{flex:1;overflow-y:auto;padding:22px 26px;display:flex;flex-direction:column;gap:22px}
+.mu{display:flex;justify-content:flex-end}
+.mub{background:var(--accent);color:white;padding:10px 14px;border-radius:11px 11px 3px 11px;max-width:460px;font-size:13px;line-height:1.6}
+.mai{display:flex;gap:9px;align-items:flex-start}
+.mai-av{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#0f172a,#1e3a8a);border:1px solid rgba(37,99,235,0.4);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mai-av svg{width:13px;height:13px;fill:var(--accent)}
+.mai-body{flex:1;max-width:540px}
+.mai-text{font-size:13px;line-height:1.75;color:var(--t1);margin-bottom:9px}
+.cp{display:inline-flex;align-items:center;gap:3px;background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);color:#93c5fd;font-size:10px;font-weight:500;padding:2px 8px;border-radius:100px;cursor:pointer;font-family:var(--mono);margin:0 2px}
+.cp:hover{background:rgba(37,99,235,0.22)}
+.mf{display:flex;align-items:center;justify-content:space-between;padding-top:8px;border-top:1px solid var(--bd);flex-wrap:wrap;gap:7px}
+.ib{width:24px;height:24px;border-radius:5px;border:1px solid var(--bd);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
+.ib:hover{color:var(--t2)}
+.schip{display:flex;align-items:center;gap:3px;background:var(--bg-e);border:1px solid var(--bd);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--t2)}
+.cin{padding:12px 18px 16px;border-top:1px solid var(--bd)}
+.cinwrap{background:var(--bg-s);border:1px solid var(--bd2);border-radius:10px;padding:9px 12px}
+.cinwrap:focus-within{border-color:rgba(37,99,235,0.5)}
+.cta{width:100%;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:var(--sans);resize:none;line-height:1.6;min-height:36px}
+.cif{display:flex;align-items:center;justify-content:space-between;margin-top:5px}
+.chint{font-size:10px;color:var(--t3);padding:2px 6px;background:rgba(255,255,255,0.03);border:1px solid var(--bd);border-radius:4px}
+.sbtn{width:26px;height:26px;border-radius:6px;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 12px var(--ag)}
+.sbtn svg{width:11px;height:11px;fill:white}
+.spanel{background:var(--bg-s);border-left:1px solid var(--bd);display:flex;flex-direction:column}
+.sph{padding:12px 14px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
+.sptitle{font-size:12px;font-weight:600;color:var(--t1)}
+.slist{padding:9px;display:flex;flex-direction:column;gap:6px;flex:1;overflow-y:auto}
+.scard{background:var(--bg-card);border:1px solid var(--bd);border-radius:9px;padding:10px;cursor:pointer;transition:border-color .14s}
+.scard:hover{border-color:var(--bd2)}
+.scard.on{border-color:rgba(37,99,235,0.4)}
+.scard-h{display:flex;align-items:flex-start;gap:7px;margin-bottom:5px}
+.sicon{width:24px;height:24px;border-radius:5px;background:var(--bg-e);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px}
+.sname{font-size:11px;font-weight:600;color:var(--t1);line-height:1.3}
+.sloc{font-size:10px;color:var(--t3);font-family:var(--mono)}
+.sexcerpt{font-size:11px;color:var(--t2);line-height:1.5;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.1);border-radius:5px;padding:6px 8px}
+.sscore{display:flex;align-items:center;gap:5px;margin-top:6px}
+.ssb{flex:1;height:3px;background:var(--bd);border-radius:100px;overflow:hidden}
+.ssbf{height:100%;background:var(--accent);border-radius:100px}
+.ssl{font-size:10px;font-family:var(--mono);color:var(--t3)}
+</style>
+
+<style>
+/* ─ DASHBOARD ─ */
+.mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;padding:18px 18px 0}
+.mc2{background:var(--bg-card);border:1px solid var(--bd);border-radius:12px;padding:16px}
+.mlabel{font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-bottom:8px}
+.mval{font-family:var(--serif);font-size:30px;font-weight:400;color:var(--t1);line-height:1;margin-bottom:4px}
+.mdelta{font-size:11px}
+.cup{color:var(--green)}.cdn{color:var(--red)}
+.crow{display:grid;grid-template-columns:2fr 1fr;gap:11px;padding:11px 18px}
+.cc{background:var(--bg-card);border:1px solid var(--bd);border-radius:12px;padding:15px}
+.cctitle{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:2px}
+.ccsub{font-size:10px;color:var(--t3);margin-bottom:12px}
+.carea{height:96px;display:flex;align-items:flex-end;gap:2px}
+.bar{background:rgba(37,99,235,0.28);border-radius:2px 2px 0 0;flex:1;cursor:pointer}
+.bar:hover{background:rgba(37,99,235,0.5)}
+.bar.td{background:var(--accent)}
+.atables{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:0 18px 18px}
+.atc{background:var(--bg-card);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.ath{padding:11px 15px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
+.athtitle{font-size:12px;font-weight:600;color:var(--t1)}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);padding:7px 14px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,0.02)}
+td{padding:8px 14px;font-size:11px;color:var(--t2);border-bottom:1px solid rgba(255,255,255,0.04)}
+td:first-child{color:var(--t1);font-weight:500}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,0.02)}
+.gitem{padding:9px 15px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:flex-start;gap:8px}
+.gitem:last-child{border-bottom:none}
+.gicon{width:20px;height:20px;border-radius:5px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px}
+.gq{font-size:11px;font-weight:500;color:var(--t1);margin-bottom:1px}
+.gm{font-size:10px;color:var(--t3)}
+
+/* ─ CONNECTORS ─ */
+.cgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;padding:18px}
+.ccard{background:var(--bg-card);border:1px solid var(--bd);border-radius:12px;padding:16px;transition:border-color .2s}
+.ccard:hover{border-color:var(--bd2)}
+.ccard.conn{border-color:rgba(16,185,129,0.28)}
+.clogo{width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:11px;border:1px solid var(--bd)}
+.cname{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:3px}
+.cdesc{font-size:11px;color:var(--t2);line-height:1.5;margin-bottom:12px}
+.cstats{display:flex;gap:11px;margin-bottom:12px;padding:8px 10px;background:var(--bg-e);border-radius:6px}
+.csl{font-size:9px;color:var(--t3);margin-bottom:1px}
+.csv{font-size:12px;font-weight:600;color:var(--t1)}
+.cfoot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:5px}
+.csync{font-size:10px;color:var(--t3);margin-top:5px}
+
+/* ─ DOCS ─ */
+.dfilt{padding:12px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.fb{padding:3px 9px;border-radius:5px;font-size:11px;font-weight:500;border:1px solid var(--bd);background:transparent;color:var(--t2);cursor:pointer;font-family:var(--sans)}
+.fb.on{background:rgba(37,99,235,0.12);border-color:rgba(37,99,235,0.3);color:var(--accent)}
+.dsrch{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.04);border:1px solid var(--bd);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--t2)}
+.dsrch input{background:none;border:none;outline:none;color:var(--t1);font-size:11px;font-family:var(--sans);width:100%}
+.dtwrap{padding:0 18px 18px}
+.dt{width:100%;border-collapse:collapse;margin-top:11px}
+.dt th{text-align:left;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);padding:7px 11px;background:var(--bg-card);border-bottom:1px solid var(--bd)}
+.dt td{padding:9px 11px;font-size:11px;color:var(--t2);border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
+.dt td:first-child{color:var(--t1)}
+.dt tr:hover td{background:rgba(255,255,255,0.02)}
+.dnc{display:flex;align-items:center;gap:8px}
+.dti{width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.sdot{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:4px}
+
+/* ─ TEAM ─ */
+.tgrid{display:grid;grid-template-columns:1fr 290px;height:calc(100vh - 50px)}
+.tmain{padding:18px;overflow-y:auto;border-right:1px solid var(--bd)}
+.tstats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.tsc{background:var(--bg-card);border:1px solid var(--bd);border-radius:9px;padding:11px 13px;text-align:center}
+.tsn{font-family:var(--serif);font-size:24px;color:var(--t1)}
+.tsl{font-size:10px;color:var(--t3);margin-top:1px}
+.mrow{display:grid;grid-template-columns:1fr auto auto auto;gap:9px;align-items:center;padding:9px 0;border-bottom:1px solid var(--bd)}
+.mrow:last-child{border-bottom:none}
+.minfo{display:flex;align-items:center;gap:8px}
+.mav{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;color:white}
+.mname{font-size:12px;font-weight:600;color:var(--t1)}
+.memail{font-size:10px;color:var(--t3)}
+.rsel{background:var(--bg-e);border:1px solid var(--bd);color:var(--t2);font-size:11px;padding:3px 6px;border-radius:5px;font-family:var(--sans);cursor:pointer}
+.mact{font-size:10px;color:var(--t3);text-align:right;min-width:65px}
+.ipanel{background:var(--bg-s);padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+.ititle{font-size:13px;font-weight:600;color:var(--t1);margin-bottom:3px}
+.isub{font-size:12px;color:var(--t2);line-height:1.6}
+.ff{display:flex;flex-direction:column;gap:4px}
+.fl{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+.fi{background:var(--bg-card);border:1px solid var(--bd);border-radius:7px;padding:7px 10px;font-size:12px;color:var(--t1);font-family:var(--sans);outline:none;width:100%}
+.fi:focus{border-color:rgba(37,99,235,0.5)}
+.rpills{display:flex;gap:5px}
+.rpill{flex:1;padding:6px;border-radius:6px;border:1px solid var(--bd);background:transparent;font-size:11px;font-weight:500;color:var(--t2);cursor:pointer;text-align:center;font-family:var(--sans)}
+.rpill.on{background:rgba(37,99,235,0.12);border-color:rgba(37,99,235,0.4);color:var(--accent)}
+.pi{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg-card);border:1px solid var(--bd);border-radius:7px;margin-bottom:5px}
+.pe{font-size:11px;color:var(--t2)}
+.pm{font-size:10px;color:var(--t3);margin-top:1px}
+
+/* ─ BILLING ─ */
+.bgrid{display:grid;grid-template-columns:1fr 300px;height:calc(100vh - 50px)}
+.bmain{padding:18px;border-right:1px solid var(--bd);overflow-y:auto}
+.plancard{background:var(--bg-card);border:1px solid rgba(37,99,235,0.3);border-radius:12px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden}
+.plancard::before{content:"";position:absolute;top:0;right:0;width:160px;height:100%;background:radial-gradient(ellipse at right,rgba(37,99,235,0.07),transparent 70%)}
+.pname{font-family:var(--serif);font-size:19px;font-weight:400;color:var(--t1);margin-bottom:3px}
+.pprice{font-size:24px;font-weight:600;color:var(--t1);display:flex;align-items:baseline;gap:3px}
+.pprice span{font-size:13px;color:var(--t2);font-weight:400}
+.pfeats{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:11px 0}
+.pfeat{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t2)}
+.pfeat::before{content:"✓";color:var(--green);font-weight:700;flex-shrink:0}
+.utitle{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:9px}
+.uitem{margin-bottom:11px}
+.ulr{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.ulabel{font-size:11px;color:var(--t2)}
+.unums{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.ubw{height:5px;background:var(--bg-e);border-radius:100px;overflow:hidden}
+.ub{height:100%;border-radius:100px}
+.ub.warn{background:var(--gold)}
+.ub.ok{background:var(--accent)}
+.ub.crit{background:var(--red)}
+.ir{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.ir:last-child{border-bottom:none}
+.idate{color:var(--t2)}.iamt{color:var(--t1);font-weight:600;font-family:var(--mono)}
+.bside{padding:18px;background:var(--bg-s);display:flex;flex-direction:column;gap:14px}
+.upgcard{background:linear-gradient(135deg,rgba(37,99,235,0.08),rgba(124,58,237,0.08));border:1px solid rgba(37,99,235,0.2);border-radius:12px;padding:16px}
+.ugtitle{font-size:13px;font-weight:600;color:var(--t1);margin-bottom:4px}
+.ugdesc{font-size:11px;color:var(--t2);line-height:1.6;margin-bottom:11px}
+.pmeth{background:var(--bg-card);border:1px solid var(--bd);border-radius:9px;padding:11px;display:flex;align-items:center;gap:8px}
+.cico{background:var(--bg-e);border-radius:4px;padding:2px 5px;font-size:10px;font-weight:700;color:var(--t2);font-family:var(--mono)}
+
+/* ─ AUDIT ─ */
+.afilt{padding:11px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.atwrap{padding:0 18px 18px;overflow-x:auto}
+.at{width:100%;border-collapse:collapse;margin-top:11px;min-width:720px}
+.at th{text-align:left;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);padding:7px 11px;background:var(--bg-card);border-bottom:1px solid var(--bd)}
+.at td{padding:9px 11px;font-size:11px;color:var(--t2);border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle;font-family:var(--mono)}
+.at td.n{font-family:var(--sans);color:var(--t1)}
+.at tr:hover td{background:rgba(255,255,255,0.02)}
+.ac{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;font-family:var(--sans)}
+.acq{background:rgba(37,99,235,0.12);color:#60a5fa}
+.aca{background:rgba(139,92,246,0.12);color:#a78bfa}
+.acs{background:rgba(16,185,129,0.12);color:#34d399}
+.acau{background:rgba(245,158,11,0.12);color:#fbbf24}
+
+/* ─ ONBOARDING ─ */
+.obs{min-height:100vh;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px 20px;position:relative;overflow:hidden}
+.obs::before{content:"";position:absolute;top:-20%;right:-10%;width:480px;height:480px;background:radial-gradient(ellipse,rgba(37,99,235,0.07),transparent 65%);pointer-events:none}
+.oblogo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--t1);margin-bottom:34px}
+.obli{width:28px;height:28px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px var(--ag)}
+.steps{display:flex;align-items:center;gap:0;margin-bottom:34px}
+.sd{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.sd.done{background:var(--green);color:white}
+.sd.act{background:var(--accent);color:white}
+.sd.pend{background:var(--bg-e);border:1px solid var(--bd);color:var(--t3)}
+.sline{flex:1;height:1px;background:var(--bd);min-width:48px}
+.sline.done{background:var(--green)}
+.obcard{background:var(--bg-card);border:1px solid var(--bd);border-radius:16px;padding:32px;width:100%;max-width:500px;position:relative;z-index:1}
+.obstep{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.obtitle{font-family:var(--serif);font-size:24px;font-weight:400;color:var(--t1);line-height:1.2;margin-bottom:6px}
+.obdesc{font-size:13px;color:var(--t2);line-height:1.7;margin-bottom:22px}
+.sopt{display:flex;align-items:center;gap:11px;padding:11px 13px;background:var(--bg-e);border:1px solid var(--bd);border-radius:8px;cursor:pointer;margin-bottom:6px;transition:all .14s}
+.sopt:hover{border-color:var(--bd2)}
+.sopt.on{border-color:rgba(37,99,235,0.5);background:rgba(37,99,235,0.05)}
+.soico{font-size:19px;flex-shrink:0}
+.soname{font-size:12px;font-weight:600;color:var(--t1)}
+.sodesc{font-size:11px;color:var(--t2)}
+.sochk{margin-left:auto;width:17px;height:17px;border-radius:50%;border:1px solid var(--bd);flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.sopt.on .sochk{background:var(--accent);border-color:var(--accent)}
+.obnav{display:flex;align-items:center;justify-content:space-between;margin-top:20px}
+
+/* ─ SETTINGS ─ */
+.sframe{display:grid;grid-template-columns:182px 1fr;height:calc(100vh - 50px)}
+.snav{background:var(--bg-s);border-right:1px solid var(--bd);padding:12px 0}
+.snav-grp{padding:11px 13px 4px;font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
+.sni{display:flex;align-items:center;gap:7px;padding:6px 13px;font-size:12px;color:var(--t2);cursor:pointer;transition:all .12s}
+.sni:hover{color:var(--t1)}
+.sni.on{color:var(--t1);background:rgba(37,99,235,0.1);border-right:2px solid var(--accent)}
+.scont{padding:22px;overflow-y:auto}
+.ssec{margin-bottom:26px}
+.sstitle{font-size:13px;font-weight:600;color:var(--t1);margin-bottom:2px}
+.ssdesc{font-size:11px;color:var(--t2);margin-bottom:14px;line-height:1.6}
+.srow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--bd)}
+.srow:last-child{border-bottom:none}
+.srlabel{font-size:12px;font-weight:500;color:var(--t1);margin-bottom:2px}
+.srdesc{font-size:11px;color:var(--t3);line-height:1.5}
+.tog{width:34px;height:19px;border-radius:100px;background:var(--bg-e);border:1px solid var(--bd);cursor:pointer;position:relative;flex-shrink:0;transition:background .18s}
+.tog.on{background:var(--accent);border-color:var(--accent)}
+.togthumb{width:13px;height:13px;border-radius:50%;background:white;position:absolute;top:2px;left:2px;transition:transform .18s}
+.tog.on .togthumb{transform:translateX(15px)}
+
+/* ─ ANALYTICS ─ */
+.kgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;padding:18px}
+.kcrd{background:var(--bg-card);border:1px solid var(--bd);border-radius:12px;padding:15px}
+.klbl{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:8px}
+.kval{font-family:var(--serif);font-size:28px;color:var(--t1)}
+.ksub{font-size:10px;color:var(--t3);margin-top:3px}
+.topmap{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
+.ttag{padding:3px 9px;border-radius:100px;font-size:11px;font-weight:500;cursor:pointer}
+.covbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.covname{font-size:11px;color:var(--t2);width:106px;flex-shrink:0}
+.covtrack{flex:1;height:5px;background:var(--bg-e);border-radius:100px;overflow:hidden}
+.covfill{height:100%;border-radius:100px}
+.covpct{font-size:10px;font-family:var(--mono);color:var(--t3);width:26px;text-align:right;flex-shrink:0}
+.qtrow{display:flex;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px}
+.qtrow:last-child{border-bottom:none}
+.qtq{color:var(--t2);flex:1}
+.qtc{color:var(--t1);font-family:var(--mono);font-weight:600;margin-left:9px}
+.qtbar{width:66px;height:3px;background:var(--bg-e);border-radius:100px;overflow:hidden;margin-left:6px}
+.qtfill{height:100%;background:var(--accent);border-radius:100px}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- LEFT NAVIGATOR -->
+<nav class="lnav">
+  <div class="lnav-logo">
+    <div class="lnav-icon"><svg viewBox="0 0 18 18"><path d="M9 1L2 5v8l7 4 7-4V5L9 1zm0 2.2l4.8 2.8L9 8.8 4.2 6 9 3.2zm-5.8 3.8l5 2.9v5.2L3.2 12V7zm6.8 8.1V9.9l5-2.9V12l-5 2.9z"/></svg></div>
+    Screens
+  </div>
+  <div class="lnav-group">Core App</div>
+  <button class="lnav-btn on" onclick="show('s1',this)">💬  01 · Chat Interface</button>
+  <button class="lnav-btn" onclick="show('s2',this)">📊  02 · Admin Dashboard</button>
+  <button class="lnav-btn" onclick="show('s8',this)">🚀  03 · Onboarding</button>
+  <div class="lnav-group">Management</div>
+  <button class="lnav-btn" onclick="show('s3',this)">🔌  04 · Connectors</button>
+  <button class="lnav-btn" onclick="show('s4',this)">📄  05 · Doc Library</button>
+  <button class="lnav-btn" onclick="show('s5',this)">👥  06 · Team</button>
+  <div class="lnav-group">Enterprise</div>
+  <button class="lnav-btn" onclick="show('s6',this)">💳  07 · Billing</button>
+  <button class="lnav-btn" onclick="show('s7',this)">🛡  08 · Audit Log</button>
+  <button class="lnav-btn" onclick="show('s10',this)">📈  09 · Analytics</button>
+  <button class="lnav-btn" onclick="show('s9',this)">⚙️  10 · Settings</button>
+</nav>
+
+<div class="screens">
+
+<!-- ════════ SCREEN 1: CHAT ════════ -->
+<div id="s1" class="scr on">
+<div class="chat-frame">
+  <div class="topbar" style="grid-column:1/-1">
+    <div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1zm0 2.2l4.8 2.8L9 8.8 4.2 6 9 3.2z"/></svg></div>AI Knowledge</div>
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--bd2);border-radius:6px;font-size:11px;color:var(--t2);cursor:pointer">Engineering Workspace ▾</div>
+    <div class="tright"><span style="font-size:11px;color:var(--t3)">24,891 docs</span><span class="badge bgreen">● Operational</span><div class="av">SC</div></div>
+  </div>
+  <div class="csb">
+    <div class="csb-top"><button class="newchat">+ New conversation</button></div>
+    <div style="padding:5px 7px 2px;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Today</div>
+    <div class="hlist">
+      <div class="hi on"><div class="hi-q">What is our vendor SLA policy for P1 incidents?</div><div class="hi-m">2 min ago · 3 sources</div></div>
+      <div class="hi"><div class="hi-q">Employee performance review process steps</div><div class="hi-m">1hr ago · 5 sources</div></div>
+      <div class="hi"><div class="hi-q">New government contract onboarding process</div><div class="hi-m">3hr ago · 7 sources</div></div>
+      <div style="padding:5px 7px 2px;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-top:5px">Yesterday</div>
+      <div class="hi"><div class="hi-q">Security incident response for data breach</div><div class="hi-m">Yesterday · 4 sources</div></div>
+      <div class="hi"><div class="hi-q">Remote employee benefits eligibility</div><div class="hi-m">Yesterday · 2 sources</div></div>
+      <div class="hi"><div class="hi-q">IDIQ contract ceiling modification process</div><div class="hi-m">Yesterday · 6 sources</div></div>
+    </div>
+  </div>
+  <div class="cmain">
+    <div class="msgs">
+      <div class="mu"><div class="mub">What is our current vendor SLA policy for P1 incidents, and who are the escalation contacts?</div></div>
+      <div class="mai">
+        <div class="mai-av"><svg viewBox="0 0 18 18"><path d="M9 1L2 5v8l7 4 7-4V5L9 1zm0 2.2l4.8 2.8L9 8.8 4.2 6 9 3.2z"/></svg></div>
+        <div class="mai-body">
+          <div class="mai-text">Per our vendor management policy, <strong style="color:var(--t1)">P1 Critical incidents require a 4-hour initial response SLA</strong> with resolution targets of 8 hours for full service restoration. <span class="cp">📄 Vendor Policy v3 · §3.2</span><br><br>Escalation goes through the Vendor Relationship Manager first, then VP of Operations if unresolved after 2 hours. Tier 1 vendors must provide a named TAM reachable 24/7. <span class="cp">📋 IT Compliance Guide · p.14</span><br><br>Critical infrastructure vendors additionally require quarterly SLA audits and documented P1 runbooks. <span class="cp">📄 Infrastructure Standards · §7.1</span></div>
+          <div class="mf">
+            <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><div class="conf-hi">High confidence</div><div style="display:flex;gap:4px;flex-wrap:wrap"><div class="schip">📄 Vendor Policy v3</div><div class="schip">📋 IT Compliance Guide</div><div class="schip">📄 Infra Standards</div></div></div>
+            <div style="display:flex;gap:5px"><button class="ib">⎘</button><button class="ib">👍</button><button class="ib">👎</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="mu"><div class="mub">Who specifically is the Tier 1 TAM for AWS?</div></div>
+      <div class="mai">
+        <div class="mai-av"><svg viewBox="0 0 18 18"><path d="M9 1L2 5v8l7 4 7-4V5L9 1zm0 2.2l4.8 2.8L9 8.8 4.2 6 9 3.2z"/></svg></div>
+        <div class="mai-body">
+          <div class="mai-text">I couldn't find specific AWS TAM contact details in your connected knowledge base. The contract registry may contain this — it doesn't appear to be indexed yet.<br><br><div style="background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:6px;padding:8px 10px;display:inline-flex;align-items:flex-start;gap:6px;max-width:380px"><span style="color:var(--gold);flex-shrink:0">⚠</span><span style="font-size:12px;color:var(--t2)">Suggested: Upload your AWS vendor contract to fill this knowledge gap.</span></div></div>
+          <div class="mf"><div class="conf-md">Medium — partial information</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="cin">
+      <div class="cinwrap">
+        <textarea class="cta" placeholder="Ask anything about your organization's knowledge…" rows="2"></textarea>
+        <div class="cif"><div style="display:flex;gap:5px"><div class="chint">All workspaces</div><div class="chint">24,891 docs</div></div><button class="sbtn"><svg viewBox="0 0 16 16"><path d="M2 8l12-6-5 6 5 6z"/></svg></button></div>
+      </div>
+    </div>
+  </div>
+  <div class="spanel">
+    <div class="sph"><div class="sptitle">Sources · 3 cited</div><span class="badge bgreen">High</span></div>
+    <div class="slist">
+      <div class="scard on">
+        <div class="scard-h"><div class="sicon">📄</div><div><div class="sname">Vendor Policy v3.pdf</div><div class="sloc">Section 3.2 · Page 12</div></div></div>
+        <div class="sexcerpt">"P1 Critical incidents require vendor response within 4 hours. Full restoration SLA: 8 business hours."</div>
+        <div class="sscore"><div class="ssb"><div class="ssbf" style="width:94%"></div></div><div class="ssl">94%</div></div>
+      </div>
+      <div class="scard">
+        <div class="scard-h"><div class="sicon">📋</div><div><div class="sname">IT Compliance Guide 2024</div><div class="sloc">Page 14 · Escalation</div></div></div>
+        <div class="sexcerpt">"Tier 1 vendors: named TAM 24/7. Escalation: VRM → VP Ops (2hr threshold)."</div>
+        <div class="sscore"><div class="ssb"><div class="ssbf" style="width:88%"></div></div><div class="ssl">88%</div></div>
+      </div>
+      <div class="scard">
+        <div class="scard-h"><div class="sicon">📄</div><div><div class="sname">Infrastructure Standards</div><div class="sloc">Section 7.1 · Tier 1</div></div></div>
+        <div class="sexcerpt">"Critical infra vendors: quarterly SLA audit + P1 runbooks within 30 days of incident."</div>
+        <div class="sscore"><div class="ssb"><div class="ssbf" style="width:81%"></div></div><div class="ssl">81%</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 2: DASHBOARD ════════ -->
+<div id="s2" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><span class="badge bgreen">● Live</span><div class="av">SC</div></div></div>
+  <div class="sidebar">
+    <div class="sg">Overview</div>
+    <div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3zm0 6h4v4H1V9zm6-6h4v4H7V3zm0 6h4v4H7V9zm5-6h3v4h-3V3zm0 6h3v4h-3V9z"/></svg>Dashboard</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6a5 5 0 0110 0H3z"/></svg>Team<span class="sbadge" style="background:var(--accent)">12</span></div>
+    <div class="sg">Knowledge</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h12v2H2V2z"/></svg>Documents</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4v4H3V3zm6 0h4v4H9V3zm-6 6h4v4H3V9zm6 0h4v4H9V9z"/></svg>Connectors<span class="sbadge" style="background:var(--red)">1</span></div>
+    <div class="sg">Enterprise</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 1h10v14H3V1z"/></svg>Billing</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3l7-2 7 2v5c0 3.5-3 6-7 7-4-1-7-3.5-7-7V3z"/></svg>Audit Log</div>
+  </div>
+  <div class="mc">
+    <div class="ph"><div style="display:flex;align-items:center;justify-content:space-between"><div><div class="ptitle">Dashboard</div><div class="psub">Acme Corp · Business Plan · Last 30 days</div></div><div style="display:flex;gap:6px"><button class="btn bg">Export CSV</button><button class="btn bp">+ Invite team</button></div></div></div>
+    <div class="mgrid">
+      <div class="mc2"><div class="mlabel">Queries this month</div><div class="mval">4,821</div><div class="mdelta cup">↑ 23% vs last month</div></div>
+      <div class="mc2"><div class="mlabel">Active users (7d)</div><div class="mval">38</div><div class="mdelta cup">↑ 4 new users</div></div>
+      <div class="mc2"><div class="mlabel">Documents indexed</div><div class="mval">24,891</div><div class="mdelta" style="color:var(--t3)">→ 8 connectors</div></div>
+      <div class="mc2"><div class="mlabel">Avg response time</div><div class="mval">1.8s</div><div class="mdelta cdn">↑ 0.2s vs last week</div></div>
+    </div>
+    <div class="crow">
+      <div class="cc">
+        <div class="cctitle">Queries per day — last 30 days</div><div class="ccsub">Filled bar = today</div>
+        <div class="carea"><div class="bar" style="height:40%"></div><div class="bar" style="height:55%"></div><div class="bar" style="height:48%"></div><div class="bar" style="height:70%"></div><div class="bar" style="height:60%"></div><div class="bar" style="height:80%"></div><div class="bar" style="height:65%"></div><div class="bar" style="height:72%"></div><div class="bar" style="height:50%"></div><div class="bar" style="height:68%"></div><div class="bar" style="height:90%"></div><div class="bar" style="height:75%"></div><div class="bar" style="height:82%"></div><div class="bar" style="height:70%"></div><div class="bar" style="height:88%"></div><div class="bar" style="height:94%"></div><div class="bar" style="height:78%"></div><div class="bar" style="height:85%"></div><div class="bar" style="height:60%"></div><div class="bar" style="height:77%"></div><div class="bar" style="height:95%"></div><div class="bar" style="height:82%"></div><div class="bar" style="height:88%"></div><div class="bar" style="height:70%"></div><div class="bar" style="height:92%"></div><div class="bar" style="height:78%"></div><div class="bar" style="height:84%"></div><div class="bar" style="height:88%"></div><div class="bar" style="height:96%"></div><div class="bar td" style="height:74%"></div></div>
+      </div>
+      <div class="cc">
+        <div class="cctitle">Answer confidence</div><div class="ccsub">Distribution this month</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+          <div><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t2);margin-bottom:3px"><span>High</span><span style="color:var(--green)">68%</span></div><div style="height:5px;background:var(--bg-e);border-radius:100px"><div style="height:100%;width:68%;background:var(--green);border-radius:100px"></div></div></div>
+          <div><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t2);margin-bottom:3px"><span>Medium</span><span style="color:var(--gold)">22%</span></div><div style="height:5px;background:var(--bg-e);border-radius:100px"><div style="height:100%;width:22%;background:var(--gold);border-radius:100px"></div></div></div>
+          <div><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t2);margin-bottom:3px"><span>Low / Not found</span><span style="color:var(--red)">10%</span></div><div style="height:5px;background:var(--bg-e);border-radius:100px"><div style="height:100%;width:10%;background:var(--red);border-radius:100px"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="atables">
+      <div class="atc">
+        <div class="ath"><div class="athtitle">Top queries this month</div><button class="btn bg" style="padding:3px 8px;font-size:10px">View all</button></div>
+        <table><thead><tr><th>Query</th><th>Count</th><th>Confidence</th></tr></thead><tbody>
+          <tr><td>Vendor SLA policy P1</td><td>142</td><td><span class="badge bgreen">High</span></td></tr>
+          <tr><td>Employee benefits remote</td><td>118</td><td><span class="badge bgreen">High</span></td></tr>
+          <tr><td>IDIQ contract modification</td><td>94</td><td><span class="badge bamber">Medium</span></td></tr>
+          <tr><td>Security incident response</td><td>87</td><td><span class="badge bgreen">High</span></td></tr>
+          <tr><td>PTO accrual policy</td><td>76</td><td><span class="badge bgreen">High</span></td></tr>
+        </tbody></table>
+      </div>
+      <div class="atc">
+        <div class="ath"><div class="athtitle">Knowledge gaps — unanswered</div><button class="btn bg" style="padding:3px 8px;font-size:10px">Export</button></div>
+        <div class="gitem"><div class="gicon">⚠</div><div><div class="gq">AWS TAM contact for Tier 1 vendors</div><div class="gm">Asked 34× · No source found</div></div></div>
+        <div class="gitem"><div class="gicon">⚠</div><div><div class="gq">Q3 2024 budget by department</div><div class="gm">Asked 28× · Partial match (Low)</div></div></div>
+        <div class="gitem"><div class="gicon">⚠</div><div><div class="gq">Subcontractor NDA latest version</div><div class="gm">Asked 19× · Outdated doc (2022)</div></div></div>
+        <div class="gitem"><div class="gicon">⚠</div><div><div class="gq">Healthcare enrollment deadline 2025</div><div class="gm">Asked 16× · No source found</div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 3: ONBOARDING ════════ -->
+<div id="s8" class="scr">
+<div class="obs">
+  <div class="oblogo"><div class="obli"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge Assistant</div>
+  <div class="steps"><div class="sd done">✓</div><div class="sline done"></div><div class="sd act">2</div><div class="sline"></div><div class="sd pend">3</div></div>
+  <div class="obcard">
+    <div class="obstep">Step 2 of 3</div>
+    <div class="obtitle">Connect your first knowledge source</div>
+    <div class="obdesc">Choose where your team's documents live. We'll sync them automatically and have you ready to ask questions in minutes.</div>
+    <div class="sopt on"><div class="soico">📘</div><div><div class="soname">Confluence</div><div class="sodesc">Wiki pages and documentation spaces</div></div><div class="sochk"><svg viewBox="0 0 10 10" style="width:10px;height:10px;fill:white"><path d="M1.5 5l2.5 2.5L8.5 2"/></svg></div></div>
+    <div class="sopt"><div class="soico">📁</div><div><div class="soname">Google Drive</div><div class="sodesc">Google Docs, Sheets, uploaded files</div></div><div class="sochk"></div></div>
+    <div class="sopt"><div class="soico">⬛</div><div><div class="soname">Notion</div><div class="sodesc">Pages, databases, and wikis</div></div><div class="sochk"></div></div>
+    <div class="sopt"><div class="soico">📂</div><div><div class="soname">Upload files</div><div class="sodesc">PDFs, Word docs, text files</div></div><div class="sochk"></div></div>
+    <div class="obnav"><button class="btn bg">← Back</button><button class="btn bp">Connect Confluence →</button></div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 4: CONNECTORS ════════ -->
+<div id="s3" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar">
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div>
+    <div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4v4H3V3zm6 0h4v4H9V3zm-6 6h4v4H3V9zm6 0h4v4H9V9z"/></svg>Connectors</div>
+    <div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h12v2H2V2z"/></svg>Documents</div>
+  </div>
+  <div class="mc">
+    <div class="ph"><div style="display:flex;align-items:center;justify-content:space-between"><div><div class="ptitle">Connectors</div><div class="psub">8 active · Synced 4 min ago · 24,891 documents</div></div><button class="btn bp">+ Add connector</button></div></div>
+    <div class="cgrid">
+      <div class="ccard conn"><div class="clogo" style="background:rgba(0,101,209,0.1);border-color:rgba(0,101,209,0.3)">📘</div><div class="cname">Confluence</div><div class="cdesc">Wiki pages, docs, meeting notes across all spaces</div><div class="cstats"><div><div class="csl">Documents</div><div class="csv">8,421</div></div><div><div class="csl">Spaces</div><div class="csv">12</div></div></div><div class="cfoot"><span class="badge bgreen">● Synced</span><div style="display:flex;gap:4px"><button class="btn bg" style="padding:3px 7px;font-size:10px">Sync now</button><button class="btn bg" style="padding:3px 7px;font-size:10px">Settings</button></div></div><div class="csync">Last sync: 4 min ago</div></div>
+      <div class="ccard conn"><div class="clogo" style="background:rgba(26,115,232,0.1);border-color:rgba(26,115,232,0.3)">📁</div><div class="cname">Google Drive</div><div class="cdesc">Docs, Sheets summaries, uploaded PDFs</div><div class="cstats"><div><div class="csl">Documents</div><div class="csv">6,204</div></div><div><div class="csl">Drives</div><div class="csv">3</div></div></div><div class="cfoot"><span class="badge bgreen">● Synced</span><div style="display:flex;gap:4px"><button class="btn bg" style="padding:3px 7px;font-size:10px">Sync now</button><button class="btn bg" style="padding:3px 7px;font-size:10px">Settings</button></div></div><div class="csync">Last sync: 4 min ago</div></div>
+      <div class="ccard conn"><div class="clogo">⬛</div><div class="cname">Notion</div><div class="cdesc">Pages, databases, team wikis</div><div class="cstats"><div><div class="csl">Pages</div><div class="csv">3,180</div></div><div><div class="csl">Databases</div><div class="csv">24</div></div></div><div class="cfoot"><span class="badge bgreen">● Synced</span><button class="btn bg" style="padding:3px 7px;font-size:10px">Sync now</button></div><div class="csync">Last sync: 4 min ago</div></div>
+      <div class="ccard" style="border-color:rgba(239,68,68,0.3)"><div class="clogo">🐙</div><div class="cname">GitHub</div><div class="cdesc">READMEs, docs, code comments</div><div class="cstats"><div><div class="csl">Repos</div><div class="csv">18</div></div><div><div class="csl">Files</div><div class="csv">2,840</div></div></div><div class="cfoot"><span class="badge bred">● Sync error</span><button class="btn bdanger" style="padding:3px 7px;font-size:10px">Retry</button></div><div class="csync" style="color:var(--red)">Token expired · Reconnect</div></div>
+      <div class="ccard conn"><div class="clogo" style="background:rgba(0,82,204,0.1)">🎫</div><div class="cname">Jira</div><div class="cdesc">Issues, epics, resolution notes</div><div class="cstats"><div><div class="csl">Issues</div><div class="csv">4,246</div></div><div><div class="csl">Projects</div><div class="csv">7</div></div></div><div class="cfoot"><span class="badge bgreen">● Synced</span><button class="btn bg" style="padding:3px 7px;font-size:10px">Sync now</button></div><div class="csync">Last sync: 4 min ago</div></div>
+      <div class="ccard" style="opacity:.6;border-style:dashed"><div class="clogo">📋</div><div class="cname">SharePoint</div><div class="cdesc">Document libraries, Microsoft 365</div><div class="cfoot"><span class="badge bgray">Not connected</span><button class="btn bp" style="padding:4px 10px;font-size:10px">Connect →</button></div></div>
+      <div class="ccard" style="opacity:.6;border-style:dashed"><div class="clogo">💬</div><div class="cname">Zendesk</div><div class="cdesc">Support tickets, help center articles</div><div class="cfoot"><span class="badge bgray">Not connected</span><button class="btn bp" style="padding:4px 10px;font-size:10px">Connect →</button></div></div>
+      <div class="ccard" style="opacity:.6;border-style:dashed"><div class="clogo">📂</div><div class="cname">File Upload</div><div class="cdesc">Manually upload PDFs, DOCX, TXT files</div><div class="cfoot"><span class="badge bgray">Manual</span><button class="btn bp" style="padding:4px 10px;font-size:10px">Upload →</button></div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 5: DOCUMENT LIBRARY ════════ -->
+<div id="s4" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h12v2H2V2z"/></svg>Documents</div><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4v4H3V3z"/></svg>Connectors</div></div>
+  <div class="mc">
+    <div class="ph"><div style="display:flex;align-items:center;justify-content:space-between"><div><div class="ptitle">Document Library</div><div class="psub">24,891 documents · 8 sources · All indexed</div></div><button class="btn bp">+ Upload files</button></div></div>
+    <div class="dfilt">
+      <div class="dsrch" style="max-width:220px"><span style="color:var(--t3)">🔍</span><input placeholder="Search documents…"></div>
+      <button class="fb on">All</button><button class="fb">Confluence</button><button class="fb">Google Drive</button><button class="fb">Notion</button><button class="fb">Uploaded</button><button class="fb">⚠ Needs reindex</button>
+    </div>
+    <div class="dtwrap">
+      <table class="dt">
+        <thead><tr><th style="width:38%">Document</th><th>Source</th><th>Status</th><th>Chunks</th><th>Last indexed</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><div class="dnc"><div class="dti" style="background:rgba(0,101,209,0.1)">📄</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">Vendor Policy v3.pdf</div><div style="font-size:10px;color:var(--t3)">Policy · 24 pages</div></div></div></td><td><span class="badge bblue">Confluence</span></td><td><span style="font-size:11px;color:var(--green)"><span class="sdot" style="background:var(--green)"></span>Indexed</span></td><td style="font-family:var(--mono);font-size:11px">284</td><td style="font-size:11px;color:var(--t3)">4 min ago</td><td><button class="btn bg" style="padding:3px 7px;font-size:10px">View</button></td></tr>
+          <tr><td><div class="dnc"><div class="dti" style="background:rgba(26,115,232,0.1)">📋</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">IT Compliance Guide 2024</div><div style="font-size:10px;color:var(--t3)">Compliance · 87 pages</div></div></div></td><td><span class="badge bblue">Google Drive</span></td><td><span style="font-size:11px;color:var(--green)"><span class="sdot" style="background:var(--green)"></span>Indexed</span></td><td style="font-family:var(--mono);font-size:11px">1,024</td><td style="font-size:11px;color:var(--t3)">4 min ago</td><td><button class="btn bg" style="padding:3px 7px;font-size:10px">View</button></td></tr>
+          <tr><td><div class="dnc"><div class="dti" style="background:rgba(245,158,11,0.1)">⚠️</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">Subcontractor NDA Template 2022</div><div style="font-size:10px;color:var(--gold)">Outdated — consider updating</div></div></div></td><td><span class="badge bblue">Google Drive</span></td><td><span style="font-size:11px;color:var(--gold)"><span class="sdot" style="background:var(--gold)"></span>Stale</span></td><td style="font-family:var(--mono);font-size:11px">48</td><td style="font-size:11px;color:var(--t3)">8 months ago</td><td><button class="btn bg" style="padding:3px 7px;font-size:10px">View</button></td></tr>
+          <tr><td><div class="dnc"><div class="dti" style="background:rgba(16,185,129,0.1)">📊</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">Employee Handbook v5.0</div><div style="font-size:10px;color:var(--t3)">HR Policy · 112 pages</div></div></div></td><td><span class="badge bgray">Uploaded</span></td><td><span style="font-size:11px;color:var(--green)"><span class="sdot" style="background:var(--green)"></span>Indexed</span></td><td style="font-family:var(--mono);font-size:11px">1,340</td><td style="font-size:11px;color:var(--t3)">2 days ago</td><td><button class="btn bg" style="padding:3px 7px;font-size:10px">View</button></td></tr>
+          <tr><td><div class="dnc"><div class="dti" style="background:rgba(37,99,235,0.1)">📝</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">Q4 2024 Engineering Roadmap</div><div style="font-size:10px;color:var(--t3)">Planning · 18 pages</div></div></div></td><td><span class="badge bblue">Notion</span></td><td><span style="font-size:11px;color:var(--accent)">⟳ Indexing…</span></td><td style="font-family:var(--mono);font-size:11px">—</td><td style="font-size:11px;color:var(--t3)">In progress</td><td><button class="btn bg" style="padding:3px 7px;font-size:10px" disabled>View</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 6: TEAM MANAGEMENT ════════ -->
+<div id="s5" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6a5 5 0 0110 0H3z"/></svg>Team</div></div>
+  <div class="mc" style="padding:0">
+    <div class="ph"><div class="ptitle">Team Management</div><div class="psub">12 members · Business plan · 100 seat limit</div></div>
+    <div class="tgrid">
+      <div class="tmain">
+        <div class="tstats">
+          <div class="tsc"><div class="tsn">12</div><div class="tsl">Active members</div></div>
+          <div class="tsc"><div class="tsn">2</div><div class="tsl">Pending invites</div></div>
+          <div class="tsc"><div class="tsn">38</div><div class="tsl">Queries today</div></div>
+        </div>
+        <div class="mrow" style="padding-top:0;border-top:1px solid var(--bd)">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Member</div>
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Role</div>
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Status</div>
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Activity</div>
+        </div>
+        <div class="mrow"><div class="minfo"><div class="mav" style="background:linear-gradient(135deg,#2563EB,#7C3AED)">SC</div><div><div class="mname">Sarah Chen</div><div class="memail">sarah.chen@acmecorp.com</div></div></div><select class="rsel"><option>Admin</option><option>Member</option></select><span class="badge bgreen">Active</span><div class="mact">142 queries<br>this month</div></div>
+        <div class="mrow"><div class="minfo"><div class="mav" style="background:linear-gradient(135deg,#059669,#0d9488)">MR</div><div><div class="mname">Marcus Reid</div><div class="memail">m.reid@acmecorp.com</div></div></div><select class="rsel"><option>Member</option><option>Admin</option></select><span class="badge bgreen">Active</span><div class="mact">98 queries<br>this month</div></div>
+        <div class="mrow"><div class="minfo"><div class="mav" style="background:linear-gradient(135deg,#7C3AED,#DB2777)">JL</div><div><div class="mname">Jamie Lin</div><div class="memail">j.lin@acmecorp.com</div></div></div><select class="rsel"><option>Member</option><option>Admin</option></select><span class="badge bgreen">Active</span><div class="mact">76 queries<br>this month</div></div>
+        <div class="mrow"><div class="minfo"><div class="mav" style="background:linear-gradient(135deg,#D97706,#DC2626)">AP</div><div><div class="mname">Alex Park</div><div class="memail">a.park@acmecorp.com</div></div></div><select class="rsel"><option>Member</option><option>Admin</option></select><span class="badge bgreen">Active</span><div class="mact">54 queries<br>this month</div></div>
+        <div class="mrow"><div class="minfo"><div class="mav" style="background:var(--bg-e);border:1px solid var(--bd);color:var(--t3)">?</div><div><div class="mname" style="color:var(--t2)">pending@acmecorp.com</div><div class="memail">Invite sent 2 days ago</div></div></div><span style="font-size:11px;color:var(--t3)">—</span><span class="badge bamber">Pending</span><div class="mact" style="color:var(--t3)">Not joined</div></div>
+      </div>
+      <div class="ipanel">
+        <div><div class="ititle">Invite team member</div><div class="isub">Members get access to all workspaces unless restricted.</div></div>
+        <div class="ff"><div class="fl">Email address</div><input class="fi" placeholder="colleague@yourcompany.com" type="email"></div>
+        <div class="ff"><div class="fl">Role</div><div class="rpills"><button class="rpill on">Member</button><button class="rpill">Admin</button></div></div>
+        <div class="ff"><div class="fl">Workspace access</div><select class="fi"><option>All workspaces</option><option>Engineering only</option></select></div>
+        <button class="btn bp" style="width:100%;justify-content:center">Send invite →</button>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--t2);margin-bottom:8px">Pending invites (2)</div>
+          <div class="pi"><div><div class="pe">operations@acmecorp.com</div><div class="pm">Sent 2 days ago · Member</div></div><button class="btn bg" style="padding:3px 7px;font-size:10px">Resend</button></div>
+          <div class="pi"><div><div class="pe">legal@acmecorp.com</div><div class="pm">Sent 5 days ago · Admin</div></div><button class="btn bg" style="padding:3px 7px;font-size:10px">Resend</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 7: BILLING ════════ -->
+<div id="s6" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 1h10v14H3V1z"/></svg>Billing</div></div>
+  <div class="mc" style="padding:0">
+    <div class="ph"><div class="ptitle">Usage & Billing</div><div class="psub">Business Plan · Renews Dec 1, 2025</div></div>
+    <div class="bgrid">
+      <div class="bmain">
+        <div class="plancard">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px"><div><div class="pname">Business Plan</div><div class="pprice">$299<span>/month</span></div></div><span class="badge bblue">Active</span></div>
+          <div class="pfeats"><div class="pfeat">100 users included</div><div class="pfeat">All 10+ connectors</div><div class="pfeat">2,000 queries/month</div><div class="pfeat">Slack bot integration</div><div class="pfeat">Admin analytics</div><div class="pfeat">Email + chat support</div></div>
+          <div style="display:flex;gap:7px"><button class="btn bg">Change plan</button><button class="btn bg">Download invoice</button></div>
+        </div>
+        <div style="margin-bottom:16px">
+          <div class="utitle">Current period usage</div>
+          <div class="uitem"><div class="ulr"><span class="ulabel">Queries</span><span class="unums">4,821 / 10,000</span></div><div class="ubw"><div class="ub ok" style="width:48%"></div></div></div>
+          <div class="uitem"><div class="ulr"><span class="ulabel">Team members</span><span class="unums">12 / 100</span></div><div class="ubw"><div class="ub ok" style="width:12%"></div></div></div>
+          <div class="uitem"><div class="ulr"><span class="ulabel">Documents indexed</span><span class="unums">24,891 / unlimited</span></div><div class="ubw"><div class="ub ok" style="width:100%"></div></div></div>
+          <div class="uitem"><div class="ulr"><span class="ulabel">Active connectors</span><span class="unums">7 / 10</span></div><div class="ubw"><div class="ub warn" style="width:70%"></div></div></div>
+        </div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1);margin-bottom:10px">Invoice history</div>
+          <div class="ir"><span class="idate">Nov 1, 2025</span><span class="badge bgreen">Paid</span><span class="iamt">$299.00</span></div>
+          <div class="ir"><span class="idate">Oct 1, 2025</span><span class="badge bgreen">Paid</span><span class="iamt">$299.00</span></div>
+          <div class="ir"><span class="idate">Sep 1, 2025</span><span class="badge bgreen">Paid</span><span class="iamt">$149.00</span></div>
+        </div>
+      </div>
+      <div class="bside">
+        <div class="upgcard">
+          <div class="ugtitle">Upgrade to Scale</div>
+          <div class="ugdesc">You're using 70% of your connectors. Scale includes 20 connectors, SSO, audit logs, and a dedicated success manager.</div>
+          <div style="font-size:22px;font-weight:600;color:var(--t1);margin-bottom:10px">$599<span style="font-size:13px;color:var(--t2);font-weight:400">/month</span></div>
+          <button class="btn bp" style="width:100%;justify-content:center">Upgrade to Scale →</button>
+        </div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1);margin-bottom:10px">Payment method</div>
+          <div class="pmeth"><div class="cico">VISA</div><div><div style="font-size:12px;font-weight:600;color:var(--t1)">Visa ending in 4242</div><div style="font-size:10px;color:var(--t3)">Expires 08/2027</div></div><button class="btn bg" style="margin-left:auto;padding:3px 8px;font-size:10px">Update</button></div>
+        </div>
+        <div style="background:var(--bg-card);border:1px solid var(--bd);border-radius:9px;padding:13px"><div style="font-size:12px;font-weight:600;color:var(--t1);margin-bottom:6px">Need help?</div><div style="font-size:11px;color:var(--t2);line-height:1.6;margin-bottom:10px">Questions about your plan or custom enterprise pricing?</div><button class="btn bg" style="width:100%;justify-content:center;font-size:11px">Talk to sales →</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 8: AUDIT LOG ════════ -->
+<div id="s7" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3l7-2 7 2v5c0 3.5-3 6-7 7-4-1-7-3.5-7-7V3z"/></svg>Audit Log</div></div>
+  <div class="mc">
+    <div class="ph"><div style="display:flex;align-items:center;justify-content:space-between"><div><div class="ptitle">Audit Log</div><div class="psub">Immutable record of all system events · Retained 2 years</div></div><button class="btn bg">Export to SIEM</button></div></div>
+    <div class="afilt">
+      <button class="fb on">All events</button><button class="fb">Queries</button><button class="fb">Admin</button><button class="fb">Auth</button><button class="fb">Sync</button>
+      <div class="dsrch" style="max-width:200px"><input placeholder="Search events…"></div>
+      <div class="dsrch" style="max-width:150px"><input placeholder="User…"></div>
+      <button class="fb">Date range</button>
+    </div>
+    <div class="atwrap">
+      <table class="at">
+        <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th style="font-family:var(--sans)">Resource</th><th style="font-family:var(--sans)">IP</th><th style="font-family:var(--sans)">Result</th></tr></thead>
+        <tbody>
+          <tr><td>2025-11-28 14:32:18</td><td>sarah.chen</td><td><span class="ac acq">query.asked</span></td><td class="n">Workspace: Engineering</td><td>192.168.1.44</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:31:05</td><td>marcus.reid</td><td><span class="ac acq">query.asked</span></td><td class="n">Workspace: Operations</td><td>10.0.0.12</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:28:44</td><td>sarah.chen</td><td><span class="ac aca">connector.synced</span></td><td class="n">Connector: Confluence</td><td>192.168.1.44</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:22:11</td><td>system</td><td><span class="ac acs">document.indexed</span></td><td class="n">Doc: Q4 Roadmap.notion</td><td>—</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:18:33</td><td>alex.park</td><td><span class="ac acau">user.login</span></td><td class="n">Method: Google SSO</td><td>74.125.224.72</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:15:02</td><td>sarah.chen</td><td><span class="ac aca">team.invite_sent</span></td><td class="n">To: legal@acmecorp.com</td><td>192.168.1.44</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 14:02:58</td><td>system</td><td><span class="ac acs">connector.sync_failed</span></td><td class="n">Connector: GitHub</td><td>—</td><td class="n"><span class="badge bred">token_expired</span></td></tr>
+          <tr><td>2025-11-28 13:58:21</td><td>jamie.lin</td><td><span class="ac acq">query.asked</span></td><td class="n">Workspace: Legal</td><td>10.0.0.88</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 13:44:09</td><td>sarah.chen</td><td><span class="ac aca">billing.plan_changed</span></td><td class="n">Team → Business</td><td>192.168.1.44</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+          <tr><td>2025-11-28 13:30:00</td><td>system</td><td><span class="ac acs">scheduled.sync_started</span></td><td class="n">All connectors</td><td>—</td><td class="n"><span class="badge bgreen">success</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 9: KNOWLEDGE ANALYTICS ════════ -->
+<div id="s10" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1z"/></svg>Analytics</div></div>
+  <div class="mc">
+    <div class="ph"><div style="display:flex;align-items:center;justify-content:space-between"><div><div class="ptitle">Knowledge Analytics</div><div class="psub">What your team knows, what it doesn't, and what it asks most</div></div><div style="display:flex;gap:7px"><button class="btn bg">Last 30 days ▾</button><button class="btn bg">Export</button></div></div></div>
+    <div class="kgrid">
+      <div class="kcrd"><div class="klbl">Knowledge coverage</div><div class="kval">68%</div><div class="ksub">queries answered with High confidence</div></div>
+      <div class="kcrd"><div class="klbl">Active knowledge areas</div><div class="kval">14</div><div class="ksub">topic clusters identified</div></div>
+      <div class="kcrd"><div class="klbl">Unanswered queries</div><div class="kval" style="color:var(--red)">10%</div><div class="ksub">knowledge gaps to fill</div></div>
+      <div class="kcrd" style="grid-column:1/-1">
+        <div class="klbl">Topic coverage by area</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:7px">
+          <div class="covbar"><div class="covname">Vendor management</div><div class="covtrack"><div class="covfill" style="width:88%;background:var(--green)"></div></div><div class="covpct">88%</div></div>
+          <div class="covbar"><div class="covname">HR & benefits</div><div class="covtrack"><div class="covfill" style="width:82%;background:var(--green)"></div></div><div class="covpct">82%</div></div>
+          <div class="covbar"><div class="covname">IT compliance</div><div class="covtrack"><div class="covfill" style="width:76%;background:var(--green)"></div></div><div class="covpct">76%</div></div>
+          <div class="covbar"><div class="covname">Contract mgmt</div><div class="covtrack"><div class="covfill" style="width:54%;background:var(--gold)"></div></div><div class="covpct">54%</div></div>
+          <div class="covbar"><div class="covname">Financial planning</div><div class="covtrack"><div class="covfill" style="width:28%;background:var(--red)"></div></div><div class="covpct">28%</div></div>
+          <div class="covbar"><div class="covname">Legal & NDA</div><div class="covtrack"><div class="covfill" style="width:22%;background:var(--red)"></div></div><div class="covpct">22%</div></div>
+        </div>
+      </div>
+      <div class="kcrd" style="grid-column:span 2">
+        <div class="klbl">Trending queries (last 7 days)</div>
+        <div style="margin-top:7px">
+          <div class="qtrow"><span class="qtq">Vendor SLA policy for P1 incidents</span><span class="qtc">142</span><div class="qtbar"><div class="qtfill" style="width:100%"></div></div></div>
+          <div class="qtrow"><span class="qtq">Remote work benefit eligibility</span><span class="qtc">118</span><div class="qtbar"><div class="qtfill" style="width:83%"></div></div></div>
+          <div class="qtrow"><span class="qtq">IDIQ contract modification process</span><span class="qtc">94</span><div class="qtbar"><div class="qtfill" style="width:66%"></div></div></div>
+          <div class="qtrow"><span class="qtq">Security incident response playbook</span><span class="qtc">87</span><div class="qtbar"><div class="qtfill" style="width:61%"></div></div></div>
+          <div class="qtrow"><span class="qtq">PTO accrual and carryover rules</span><span class="qtc">76</span><div class="qtbar"><div class="qtfill" style="width:54%"></div></div></div>
+        </div>
+      </div>
+      <div class="kcrd">
+        <div class="klbl">Knowledge topics</div>
+        <div class="topmap">
+          <div class="ttag" style="background:rgba(37,99,235,0.15);color:#60a5fa;font-size:14px">Vendor policy</div>
+          <div class="ttag" style="background:rgba(16,185,129,0.12);color:#34d399;font-size:13px">HR & benefits</div>
+          <div class="ttag" style="background:rgba(37,99,235,0.1);color:#93c5fd;font-size:12px">Compliance</div>
+          <div class="ttag" style="background:rgba(245,158,11,0.1);color:#fbbf24;font-size:13px">Contracts</div>
+          <div class="ttag" style="background:rgba(139,92,246,0.1);color:#a78bfa;font-size:11px">Security</div>
+          <div class="ttag" style="background:rgba(16,185,129,0.08);color:#6ee7b7;font-size:11px">Engineering</div>
+          <div class="ttag" style="background:rgba(239,68,68,0.08);color:#fca5a5;font-size:10px">Legal</div>
+          <div class="ttag" style="background:rgba(148,163,184,0.08);color:var(--t3);font-size:10px">Finance</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ════════ SCREEN 10: SETTINGS ════════ -->
+<div id="s9" class="scr">
+<div class="frame">
+  <div class="topbar" style="grid-column:1/-1"><div class="tlogo"><div class="ticon"><svg viewBox="0 0 18 18" style="width:13px;height:13px;fill:white"><path d="M9 1L2 5v8l7 4 7-4V5L9 1z"/></svg></div>AI Knowledge</div><div class="tright"><div class="av">SC</div></div></div>
+  <div class="sidebar"><div class="si"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h4v4H1V3z"/></svg>Dashboard</div><div class="si on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a3 3 0 011 5.83V8h2v2H9v1.17A3 3 0 118 1z"/></svg>Settings</div></div>
+  <div class="mc" style="padding:0">
+    <div class="ph"><div class="ptitle">Settings</div><div class="psub">Workspace configuration and preferences</div></div>
+    <div class="sframe">
+      <div class="snav">
+        <div class="snav-grp">Workspace</div>
+        <div class="sni on">General</div>
+        <div class="sni">Security & SSO</div>
+        <div class="sni">API Keys</div>
+        <div class="sni">Notifications</div>
+        <div class="snav-grp" style="margin-top:6px">Personal</div>
+        <div class="sni">Profile</div>
+        <div class="sni">Preferences</div>
+      </div>
+      <div class="scont">
+        <div class="ssec">
+          <div class="sstitle">Workspace settings</div>
+          <div class="ssdesc">Configure how your organization uses the knowledge assistant.</div>
+          <div class="srow"><div><div class="srlabel">Organization name</div><div class="srdesc">Shown in billing and team invites</div></div><input class="fi" style="width:220px" value="Acme Corp"></div>
+          <div class="srow"><div><div class="srlabel">Default workspace</div><div class="srdesc">New users added here on signup</div></div><select class="fi" style="width:170px"><option>Engineering</option><option>General</option></select></div>
+        </div>
+        <div class="ssec">
+          <div class="sstitle">AI & answers</div>
+          <div class="ssdesc">Control how the AI generates and presents answers.</div>
+          <div class="srow"><div><div class="srlabel">Require citations on every answer</div><div class="srdesc">AI will not answer without a matching source document</div></div><div class="tog on"><div class="togthumb"></div></div></div>
+          <div class="srow"><div><div class="srlabel">Show confidence scores</div><div class="srdesc">Display High / Medium / Low confidence badge on responses</div></div><div class="tog on"><div class="togthumb"></div></div></div>
+          <div class="srow"><div><div class="srlabel">Enable reranking (Cohere)</div><div class="srdesc">Improves answer quality. Adds ~0.5s latency.</div></div><div class="tog on"><div class="togthumb"></div></div></div>
+          <div class="srow"><div><div class="srlabel">Cross-workspace search</div><div class="srdesc">Allow members to search across all accessible workspaces</div></div><div class="tog"><div class="togthumb"></div></div></div>
+        </div>
+        <div class="ssec">
+          <div class="sstitle">Privacy & data</div>
+          <div class="ssdesc">Control how your data is handled and retained.</div>
+          <div class="srow"><div><div class="srlabel">Query logging</div><div class="srdesc">Store all queries in audit log (required for compliance)</div></div><div class="tog on"><div class="togthumb"></div></div></div>
+          <div class="srow"><div><div class="srlabel">Feedback data collection</div><div class="srdesc">Collect thumbs up/down to improve retrieval quality</div></div><div class="tog on"><div class="togthumb"></div></div></div>
+          <div class="srow"><div><div class="srlabel" style="color:var(--red)">Delete all indexed data</div><div class="srdesc">Permanently removes all documents and embeddings</div></div><button class="btn bdanger" style="font-size:11px;padding:5px 10px">Delete data</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div><!-- end .screens -->
+</div><!-- end .shell -->
+
+<script>
+function show(id, btn) {
+  document.querySelectorAll('.scr').forEach(s => s.classList.remove('on'));
+  document.querySelectorAll('.lnav-btn').forEach(b => b.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  btn.classList.add('on');
+}
+document.querySelectorAll('.tog').forEach(t => {
+  t.addEventListener('click', () => t.classList.toggle('on'));
+});
+document.querySelectorAll('.rpills').forEach(g => {
+  g.querySelectorAll('.rpill').forEach(p => {
+    p.addEventListener('click', () => {
+      g.querySelectorAll('.rpill').forEach(x => x.classList.remove('on'));
+      p.classList.add('on');
+    });
+  });
+});
+document.querySelectorAll('.sopt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.sopt').forEach(o => {
+      o.classList.remove('on');
+      const c = o.querySelector('.sochk');
+      c.style.background = ''; c.innerHTML = '';
+    });
+    opt.classList.add('on');
+    const c = opt.querySelector('.sochk');
+    c.style.background = 'var(--accent)';
+    c.innerHTML = '<svg viewBox="0 0 10 10" style="width:10px;height:10px;fill:white"><path d="M1.5 5l2.5 2.5L8.5 2"/></svg>';
+  });
+});
+document.querySelectorAll('.fb').forEach(b => {
+  b.addEventListener('click', function() {
+    const siblings = this.parentElement.querySelectorAll('.fb');
+    siblings.forEach(x => x.classList.remove('on'));
+    this.classList.add('on');
+  });
+});
+</script>
+</body>
+</html>

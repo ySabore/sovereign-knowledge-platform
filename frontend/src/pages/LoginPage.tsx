@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { apiErrorMessage } from "../api/client";
+import { SessionErrorBanner } from "../components/SessionErrorBanner";
 import { useAuth } from "../context/AuthContext";
 import { clerkEnabled } from "../lib/clerkEnv";
 
@@ -29,8 +30,10 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ minHeight: "100%", display: "grid", placeItems: "center", padding: "2rem" }}>
-      <div className="sk-panel" style={{ width: "100%", maxWidth: 400 }}>
+    <>
+      <SessionErrorBanner />
+      <div style={{ minHeight: "100%", display: "grid", placeItems: "center", padding: "2rem" }}>
+        <div className="sk-panel" style={{ width: "100%", maxWidth: 400 }}>
         <h2 style={{ marginTop: 0 }}>Sign in</h2>
         <p className="sk-muted">Sovereign Knowledge Platform</p>
         <form onSubmit={onSubmit}>
@@ -80,7 +83,8 @@ export function LoginPage() {
             </p>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

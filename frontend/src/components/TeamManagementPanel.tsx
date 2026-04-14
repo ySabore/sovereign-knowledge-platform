@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, apiErrorMessage } from "../api/client";
+import { useOrgShellUiOptional } from "../context/OrgShellThemeContext";
 
 type Org = { id: string; name: string };
 type OrgMember = {
@@ -24,7 +25,7 @@ type InviteIssueResponse = {
   invite_token: string;
 };
 
-const T = {
+const T_DARK = {
   bg: "#0b0f18",
   card: "#111826",
   border: "rgba(255,255,255,0.07)",
@@ -33,6 +34,20 @@ const T = {
   dim: "#4a5a75",
   green: "#14b87a",
   yellow: "#d2a43c",
+  blue: "#2563eb",
+  sans: '"DM Sans",sans-serif',
+  serif: '"Instrument Serif",Georgia,serif',
+};
+
+const T_BRIGHT = {
+  bg: "#f4f6fb",
+  card: "#ffffff",
+  border: "rgba(15,23,42,0.1)",
+  text: "#0f172a",
+  muted: "#475569",
+  dim: "#64748b",
+  green: "#059669",
+  yellow: "#b45309",
   blue: "#2563eb",
   sans: '"DM Sans",sans-serif',
   serif: '"Instrument Serif",Georgia,serif',
@@ -50,7 +65,18 @@ function roleLabel(role: string) {
   return role === "org_owner" ? "Admin" : "Member";
 }
 
-export function TeamManagementPanel() {
+export function TeamManagementPanel({
+  initialOrgId,
+  scopedWorkspaceId,
+  scopedWorkspaceName,
+}: {
+  initialOrgId?: string;
+  /** When set, Team is opened from a workspace selection — org data still applies org-wide. */
+  scopedWorkspaceId?: string | null;
+  scopedWorkspaceName?: string | null;
+}) {
+  const shell = useOrgShellUiOptional();
+  const T = shell?.brightMode ? T_BRIGHT : T_DARK;
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [orgId, setOrgId] = useState("");
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -76,10 +102,15 @@ export function TeamManagementPanel() {
       .get<Org[]>("/organizations/me")
       .then((r) => {
         setOrgs(r.data);
-        if (r.data[0]) setOrgId((prev) => prev || r.data[0].id);
+        setOrgId((prev) => prev || r.data[0]?.id || "");
       })
       .catch((e) => setErr(apiErrorMessage(e)));
   }, []);
+
+  useEffect(() => {
+    if (!initialOrgId || !orgs.some((o) => o.id === initialOrgId)) return;
+    setOrgId(initialOrgId);
+  }, [initialOrgId, orgs]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -139,6 +170,23 @@ export function TeamManagementPanel() {
         <div style={{ color: T.muted, fontSize: 12 }}>
           {activeMembers} members · Business plan · 100 seat limit
         </div>
+        {scopedWorkspaceId && scopedWorkspaceName && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: T.card,
+              border: `1px solid ${T.border}`,
+              color: T.muted,
+              fontSize: 12,
+              lineHeight: 1.45,
+            }}
+          >
+            <span style={{ color: T.text, fontWeight: 600 }}>Workspace:</span> {scopedWorkspaceName} — Invites and
+            roles below are organization-wide; members with access to this org can use this workspace.
+          </div>
+        )}
       </div>
 
       {err && <div style={{ margin: "8px 10px", color: "#f87171", fontSize: 12 }}>{err}</div>}

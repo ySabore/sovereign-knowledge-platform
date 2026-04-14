@@ -114,7 +114,7 @@ export function WorkspaceChatPage() {
   return (
     <div className="sk-layout">
       <aside className="sk-nav">
-        <Link to="/home">← Organizations</Link>
+        <Link to="/organizations">← Organizations</Link>
         <h2 style={{ fontSize: "1rem", margin: "1rem 0 0.5rem" }}>Sessions</h2>
         <button type="button" className="sk-btn" style={{ width: "100%", marginBottom: "0.75rem" }} onClick={() => newSession().catch((ex) => setErr(apiErrorMessage(ex)))}>
           New chat

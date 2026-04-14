@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Knowledge Assistant — System Explainer for Stakeholders</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,300;1,9..144,300&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080C14;--bg-s:#0F1623;--bg-e:#162033;
+  --t1:#F0F4FF;--t2:#94A3B8;--t3:#4A5568;
+  --bd:rgba(255,255,255,0.08);
+  --blue:#3B82F6;--purple:#8B5CF6;--green:#10B981;
+  --amber:#F59E0B;--red:#EF4444;--gray:#94A3B8;
+  --serif:'Fraunces',Georgia,serif;--sans:'DM Sans',sans-serif;
+}
+body{background:var(--bg);color:var(--t1);font-family:var(--sans);font-size:16px;line-height:1.75}
+.page{max-width:860px;margin:0 auto;padding:48px 28px 100px}
+
+/* Header */
+.doc-header{margin-bottom:52px;padding-bottom:32px;border-bottom:1px solid var(--bd)}
+.audience-pill{display:inline-flex;align-items:center;gap:6px;background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);color:#a78bfa;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;padding:4px 14px;border-radius:100px;margin-bottom:18px}
+h1{font-family:var(--serif);font-size:clamp(32px,5vw,48px);font-weight:400;line-height:1.1;margin-bottom:14px}
+.doc-intro{font-size:17px;color:var(--t2);max-width:640px;line-height:1.75}
+.print-btn{float:right;background:#2563EB;border:none;color:white;padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans);margin-top:8px}
+.print-btn:hover{background:#1d4fd8}
+
+/* Analogy box */
+.analogy{background:rgba(139,92,246,0.07);border:1px solid rgba(139,92,246,0.2);border-radius:12px;padding:24px 28px;margin:32px 0}
+.analogy-label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#a78bfa;margin-bottom:10px}
+.analogy p{color:var(--t1);font-size:15px;line-height:1.7}
+
+/* Layer sections */
+.layer{margin-bottom:64px}
+.layer-header{display:flex;align-items:flex-start;gap:20px;margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--bd)}
+.layer-badge{flex-shrink:0;width:52px;height:52px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px}
+.layer-meta{}
+.layer-num{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
+h2{font-family:var(--serif);font-size:clamp(22px,3vw,30px);font-weight:400;line-height:1.2}
+.layer-tagline{font-size:14px;color:var(--t2);margin-top:5px;font-style:italic}
+
+/* What it does */
+.what-it-does{background:var(--bg-s);border:1px solid var(--bd);border-radius:10px;padding:20px 24px;margin-bottom:20px}
+.section-label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px}
+.what-it-does p{color:var(--t2);font-size:15px;line-height:1.7;margin-bottom:0}
+
+/* Component grid */
+.component-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.component-card{background:var(--bg-s);border:1px solid var(--bd);border-radius:10px;padding:16px 18px}
+.comp-name{font-size:14px;font-weight:600;color:var(--t1);margin-bottom:5px;display:flex;align-items:center;gap:8px}
+.comp-icon{font-size:16px}
+.comp-desc{font-size:13px;color:var(--t2);line-height:1.6}
+
+/* Analogy inline */
+.analogy-inline{background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;color:var(--t2);line-height:1.6}
+.analogy-inline strong{color:var(--amber)}
+
+/* User story */
+.user-story{border-left:3px solid;border-radius:0 8px 8px 0;padding:14px 18px;margin:20px 0;font-size:14px;color:var(--t2);line-height:1.65;font-style:italic}
+
+/* What it costs to build */
+.cost-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd);font-size:14px}
+.cost-row:last-child{border-bottom:none}
+.cost-label{color:var(--t2)}
+.cost-val{font-weight:600;color:var(--t1)}
+
+/* Key question */
+.key-q{background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:16px 20px;margin-top:20px}
+.key-q .q-label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--green);margin-bottom:6px}
+.key-q p{font-size:14px;color:var(--t1);line-height:1.65}
+
+/* Flow diagram (text-based) */
+.flow{display:flex;align-items:center;gap:0;flex-wrap:wrap;margin:20px 0;background:var(--bg-s);border:1px solid var(--bd);border-radius:10px;padding:16px 20px}
+.flow-step{text-align:center;padding:8px 12px;flex:1;min-width:80px}
+.flow-step .step-name{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:3px}
+.flow-step .step-desc{font-size:10px;color:var(--t3)}
+.flow-arrow{color:var(--t3);font-size:18px;flex-shrink:0;padding:0 4px}
+
+/* Divider */
+.divider{height:1px;background:var(--bd);margin:52px 0}
+
+/* Summary table */
+.summary-table{width:100%;border-collapse:collapse;margin:24px 0}
+.summary-table th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);padding:10px 14px;background:var(--bg-e);border-bottom:1px solid var(--bd)}
+.summary-table td{padding:12px 14px;border-bottom:1px solid var(--bd);font-size:14px;color:var(--t2);vertical-align:top}
+.summary-table td:first-child{color:var(--t1);font-weight:500}
+.summary-table tr:last-child td{border-bottom:none}
+
+/* FAQ */
+.faq-item{margin-bottom:24px}
+.faq-q{font-size:15px;font-weight:600;color:var(--t1);margin-bottom:8px}
+.faq-a{font-size:14px;color:var(--t2);line-height:1.7}
+
+@media print{
+  body{background:#fff;color:#111}
+  .print-btn{display:none}
+  :root{--bg:#fff;--bg-s:#f8f9fb;--bg-e:#f0f2f5;--t1:#111;--t2:#444;--t3:#888;--bd:rgba(0,0,0,0.1)}
+}
+@media(max-width:600px){.component-grid{grid-template-columns:1fr}.flow{flex-direction:column}.flow-arrow{transform:rotate(90deg)}}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- HEADER -->
+<div class="doc-header">
+  <button class="print-btn" onclick="window.print()">⬇ Save as PDF</button>
+  <div class="audience-pill">For non-technical stakeholders</div>
+  <h1>How the AI Knowledge Assistant works</h1>
+  <p class="doc-intro">A plain-English walkthrough of every layer in the system — what it does, why it exists, and what it means for the business. No engineering background required.</p>
+</div>
+
+<!-- OPENING ANALOGY -->
+<div class="analogy">
+  <div class="analogy-label">The big picture — in one analogy</div>
+  <p>Think of this product as a <strong>brilliant new employee who has read every document your company has ever written</strong> — every policy, every past project, every help article, every Slack thread — and can answer any question about any of it in seconds, while pointing to the exact page they got the answer from. They never forget anything, never leave the company, and are available 24 hours a day. The "system" is simply the infrastructure that makes that possible at scale.</p>
+</div>
+
+<!-- HOW A QUERY FLOWS -->
+<h2 style="font-family:var(--serif);font-size:24px;font-weight:400;margin-bottom:16px;margin-top:40px">What happens when someone asks a question</h2>
+<div class="flow">
+  <div class="flow-step"><div class="step-name">User types a question</div><div class="step-desc">In the app, Slack, or via API</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="step-name">Identity verified</div><div class="step-desc">Are they allowed to access this workspace?</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="step-name">Relevant passages found</div><div class="step-desc">AI searches all connected documents</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="step-name">Answer generated</div><div class="step-desc">Claude reads the passages and writes a response</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="step-name">Answer + sources returned</div><div class="step-desc">With citations linking back to original docs</div></div>
+</div>
+<p style="font-size:14px;color:var(--t2);margin-bottom:0">This entire flow takes under 3 seconds. The system is built in six layers, each handling a different part of this process.</p>
+
+<div class="divider"></div>
+
+<!-- LAYER 1 — CLIENT -->
+<div class="layer" id="layer1">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.25)">🖥️</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--blue)">Layer 1 — Client Layer</div>
+      <h2>The surfaces people actually use</h2>
+      <div class="layer-tagline">Everything a user sees and touches — the windows into the system</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>This is the front door to the product — every screen, every button, every interface that a real person interacts with. The client layer doesn't do any "thinking" — it collects what the user asks, sends it to the system, and displays what comes back. Think of it as the face of the product.</p>
+  </div>
+
+  <div class="component-grid">
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">💬</span>Web App</div>
+      <div class="comp-desc">The main product — a browser-based chat interface where employees type questions and receive cited answers. Works like a specialized version of ChatGPT but only knows your company's documents.</div>
+      <div class="analogy-inline"><strong>Real-world analogy:</strong> Like the Google search bar, but instead of searching the whole internet, it searches only your company's knowledge — and explains its sources.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📱</span>Mobile App</div>
+      <div class="comp-desc">The same experience on a phone. Useful for field teams, sales reps on the go, or anyone who needs to look something up away from their desk.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">💼</span>Slack Bot</div>
+      <div class="comp-desc">Employees can ask questions directly inside Slack — the tool they already use all day — without switching to another app. Type /ask and get a cited answer in the same thread. This is the biggest driver of daily usage.</div>
+      <div class="analogy-inline"><strong>Why it matters:</strong> Products people use in context win. If you have to leave Slack to find an answer, most people won't bother.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🔌</span>API Consumers</div>
+      <div class="comp-desc">For businesses that want to embed the answer engine into their own internal tools, customer portals, or automated workflows. A company could put "Ask our knowledge base" into their own website.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📊</span>Admin Dashboard</div>
+      <div class="comp-desc">A control panel for team leaders. Shows: how many questions were asked, which questions couldn't be answered (gaps in the knowledge base), how many documents are indexed, and team usage stats.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🔗</span>Connector UI</div>
+      <div class="comp-desc">Where admins connect the product to the company's tools — Confluence, Google Drive, Notion, GitHub. A simple "Connect" button that links the account and starts syncing documents automatically.</div>
+    </div>
+  </div>
+
+  <div class="user-story" style="border-color:var(--blue)">
+    "Sarah, a new consultant at a GovCon firm, needs to know the SLA terms in the company's vendor contracts. Instead of pinging the legal team, she types the question into the web app. In 2 seconds she gets the answer with a link to page 12 of the Vendor Policy document."
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- LAYER 2 — API GATEWAY & AUTH -->
+<div class="layer" id="layer2">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.25)">🔐</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--purple)">Layer 2 — API Gateway & Auth</div>
+      <h2>The security checkpoint</h2>
+      <div class="layer-tagline">Every request passes through here — identity verified, permissions checked, traffic controlled</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>Before any question reaches the AI engine, it passes through a security checkpoint. This layer answers three questions: <em>Who are you?</em> (authentication), <em>What are you allowed to see?</em> (permissions), and <em>Are you using the system responsibly?</em> (rate limiting). If any check fails, the request stops here.</p>
+  </div>
+
+  <div class="component-grid">
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🪪</span>Auth Service (Clerk)</div>
+      <div class="comp-desc">Manages who can log in and how. Supports sign-in with Google or GitHub, company SSO (single sign-on), and multi-factor authentication. Handles the entire login experience so the team doesn't have to build it.</div>
+      <div class="analogy-inline"><strong>Analogy:</strong> The front desk receptionist who checks your badge before letting you into the building. Knows who you are and which floors you're allowed on.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🛡️</span>RBAC Engine</div>
+      <div class="comp-desc">Role-Based Access Control — determines which documents each user is allowed to see answers from. A sales rep asking about engineering architecture should get "I can't find that" because they don't have access to engineering docs.</div>
+      <div class="analogy-inline"><strong>Why it matters for enterprise:</strong> Without this, a junior employee could potentially ask the AI about confidential HR or legal documents. RBAC prevents that entirely.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📋</span>Audit Logger</div>
+      <div class="comp-desc">Records every single action in the system — who asked what, when, which documents were accessed, and what answer was given. Cannot be edited or deleted. Required for compliance audits and security reviews.</div>
+      <div class="analogy-inline"><strong>Compliance value:</strong> In regulated industries (finance, healthcare, government), auditors need to see a complete trail of information access. This makes that possible.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🚦</span>Rate Limiter</div>
+      <div class="comp-desc">Prevents any single user or organization from overwhelming the system — like a bouncer managing a queue. Also enforces plan limits (e.g., the Starter plan allows 500 queries per month). Returns a clear error when limits are reached.</div>
+    </div>
+  </div>
+
+  <div class="key-q">
+    <div class="q-label">Key business question this answers</div>
+    <p>"How do we make sure sensitive company information doesn't leak to people who shouldn't see it?" — This layer is the complete answer to that question. Every query is permission-checked before the AI ever sees it.</p>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- LAYER 3 — APPLICATION SERVICES -->
+<div class="layer" id="layer3">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.25)">⚙️</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--green)">Layer 3 — Application Services</div>
+      <h2>The business logic engine</h2>
+      <div class="layer-tagline">The team of specialists that handle every different type of task — orchestrating the work behind the scenes</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>Once a request passes security, the application services take over. Think of this as a team of back-office specialists — one handles incoming questions, one manages document processing, one keeps connectors in sync, one handles billing. Each service does one job and does it well.</p>
+  </div>
+
+  <div class="component-grid">
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">❓</span>Query + Answer Service</div>
+      <div class="comp-desc">The conductor. Takes the user's question, tells the Retriever to find relevant passages, sends everything to the AI engine, receives the answer, and formats it with citations before returning it to the user. This is the central orchestrator.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📥</span>Ingestion Service</div>
+      <div class="comp-desc">When a new document is added (either via connector sync or file upload), this service processes it: cleans the text, cuts it into searchable pieces, converts each piece into a mathematical representation (embedding), and stores it for searching.</div>
+      <div class="analogy-inline"><strong>Analogy:</strong> Like a librarian who receives a new book, reads it, writes index cards for every chapter, and files them in the card catalogue — except they do this for thousands of documents automatically.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🔄</span>Sync Orchestrator</div>
+      <div class="comp-desc">Automatically keeps connected data sources up to date. Every 4 hours, it checks each connected tool (Confluence, Drive, etc.) for new or changed documents and re-indexes anything that's changed. You connect once and it stays current forever.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">💳</span>Billing Service</div>
+      <div class="comp-desc">Manages subscriptions, plan limits, and payment processing via Stripe. When a team upgrades from Team to Business, this service updates their limits instantly. Handles failed payments with grace periods before restricting access.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📣</span>Notification Service</div>
+      <div class="comp-desc">Sends email alerts and Slack notifications — for example, when a connector sync fails, when a team is approaching their query limit, or when the admin weekly digest is ready.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📈</span>Analytics Service</div>
+      <div class="comp-desc">Tracks product usage in real time — queries per day, most active users, top questions, unanswered questions, and connector utilization. Feeds the Admin Dashboard. Also identifies gaps in the knowledge base (frequent questions with low confidence answers).</div>
+    </div>
+  </div>
+
+  <div class="user-story" style="border-color:var(--green)">
+    "A law firm connects their Google Drive on Monday. By Monday evening, the Sync Orchestrator has processed 847 documents. On Wednesday, a paralegal updates a client memo in Drive. By Wednesday evening, the system has automatically re-indexed the new version. The paralegal asking about it Thursday morning gets the updated answer."
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- LAYER 4 — AI / RAG -->
+<div class="layer" id="layer4">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.25)">🧠</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--amber)">Layer 4 — AI / RAG Pipeline</div>
+      <h2>The intelligence engine</h2>
+      <div class="layer-tagline">Where questions become answers — the core technical differentiator of the entire product</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>RAG stands for <em>Retrieval-Augmented Generation</em> — it means the AI doesn't answer from memory, it answers by first finding the right passages from your documents and then generating a response based only on what it found. This is what makes answers trustworthy and citable, and what separates this product from general-purpose AI tools like ChatGPT.</p>
+  </div>
+
+  <div class="analogy">
+    <div class="analogy-label">Why RAG matters — the exam analogy</div>
+    <p>Imagine two types of student. The first answers exam questions from memory — they might be brilliant but they can also be confidently wrong (hallucination). The second is allowed to bring a curated set of textbooks and must cite their source for every answer. The second student's answers are always verifiable. RAG makes our AI the second student, but with the speed of the first.</p>
+  </div>
+
+  <div class="component-grid">
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🔍</span>Retriever</div>
+      <div class="comp-desc">Given a user's question, the Retriever finds the most relevant passages across all indexed documents. It works using mathematical similarity — questions and document passages are converted to numbers, and the passages whose numbers are closest to the question's numbers are returned.</div>
+      <div class="analogy-inline"><strong>Analogy:</strong> A legal researcher who, given a question, knows which filing cabinets to open and which drawers to check — pulling the 5 most relevant pages out of 50,000 in under a second.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🏆</span>Reranker</div>
+      <div class="comp-desc">A second pass of quality control. After the Retriever returns 8 candidate passages, the Reranker reads each one more carefully and re-orders them by true relevance. Like a senior editor reviewing a junior researcher's notes and prioritizing the best sources.</div>
+      <div class="analogy-inline"><strong>Business impact:</strong> Improves answer accuracy significantly. The difference between returning the 3rd-best passage and the best passage can mean the difference between a vague answer and a precise one.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📝</span>Prompt Builder</div>
+      <div class="comp-desc">Assembles everything the AI needs: the user's question, the relevant passages found by the Retriever, and strict instructions about how to answer (cite every claim, only use provided sources, be concise). The quality of this instruction set directly determines answer quality.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">✨</span>Claude (LLM)</div>
+      <div class="comp-desc">Anthropic's Claude model reads the assembled context and writes the answer. Claude is specifically instructed to only use the provided source passages — never to draw on its general training data. This is what prevents hallucination in this system.</div>
+      <div class="analogy-inline"><strong>Why Claude specifically:</strong> Claude has exceptional instruction-following, tends to produce well-structured answers, and is less likely to "make things up" than some alternatives when given strict sourcing requirements.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📐</span>Embedding Model</div>
+      <div class="comp-desc">Converts text — both documents during indexing and questions at query time — into mathematical vectors (long lists of numbers) that represent meaning. Two passages about the same topic will have similar numbers even if they use different words. This is what makes semantic search work.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">👍</span>Feedback Loop</div>
+      <div class="comp-desc">Records when users give thumbs up or thumbs down to answers, how long they spend reading a response, and whether they ask follow-up questions. Over time, this data is used to tune the system so it gets better the longer a customer uses it — creating a switching cost advantage.</div>
+    </div>
+  </div>
+
+  <div class="key-q">
+    <div class="q-label">The key differentiator — what makes this different from ChatGPT</div>
+    <p>ChatGPT answers from its general training data — it can hallucinate, it can be outdated, and it cites nothing. This system only answers from the documents you've connected. Every claim has a citation. Every answer is verifiable. For enterprise use cases — legal, compliance, government contracting — that's the difference between usable and unusable.</p>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- LAYER 5 — DATA -->
+<div class="layer" id="layer5">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25)">🗄️</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--red)">Layer 5 — Data Layer</div>
+      <h2>The memory of the system</h2>
+      <div class="layer-tagline">Six specialized storage systems, each holding a different type of information the product needs to function</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>Every piece of information the system needs to store lives here — from user accounts and billing records, to the mathematical representations of 50,000 documents, to background job queues. Different types of data need different types of storage, each optimized for its purpose.</p>
+  </div>
+
+  <div class="component-grid">
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🏛️</span>Postgres Database</div>
+      <div class="comp-desc">The main relational database. Stores structured data: organizations, users, workspaces, document records, billing subscriptions, and the complete audit log. Think of it as the system's official record book — everything factual and structured lives here.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🧮</span>Vector Database (pgvector)</div>
+      <div class="comp-desc">A specialized database for storing and searching mathematical representations of text (embeddings). When a user asks a question, this database finds the mathematically closest document passages in milliseconds across millions of stored chunks. Without this, semantic search is impossible.</div>
+      <div class="analogy-inline"><strong>Analogy:</strong> A library's card catalogue, but instead of alphabetical filing, every card is filed by meaning — cards about similar topics are stored physically near each other.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📁</span>Object Storage (S3)</div>
+      <div class="comp-desc">Stores the actual raw files — the PDFs, Word documents, and other files that have been uploaded or synced from connectors. Cheap, infinitely scalable storage. The vector database holds the searchable version; S3 holds the original for reference and re-processing.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">⚡</span>Redis Cache</div>
+      <div class="comp-desc">Ultra-fast temporary storage for things the system needs constantly: login sessions, rate limit counters, frequently accessed plan information, and recently computed embeddings. Prevents the main database from being asked the same question thousands of times per hour.</div>
+      <div class="analogy-inline"><strong>Analogy:</strong> A sticky note on your desk for information you need every 5 minutes, rather than going back to the filing cabinet every time.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">📬</span>Job Queue (BullMQ)</div>
+      <div class="comp-desc">A queue of background tasks that need to happen but don't need to block the user: re-indexing a document, syncing a connector, sending a weekly email digest. Tasks are queued, processed in order, retried automatically if they fail, and logged when complete.</div>
+    </div>
+    <div class="component-card">
+      <div class="comp-name"><span class="comp-icon">🤖</span>Model Store</div>
+      <div class="comp-desc">(Phase 4) Stores custom-trained versions of the reranking model, fine-tuned on each customer's specific query patterns. Customers who have been using the product for 6+ months benefit from a model that's been specifically optimized for their type of questions.</div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- LAYER 6 — CONNECTORS -->
+<div class="layer" id="layer6">
+  <div class="layer-header">
+    <div class="layer-badge" style="background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.25)">🔌</div>
+    <div class="layer-meta">
+      <div class="layer-num" style="color:var(--gray)">Layer 6 — External Connectors</div>
+      <h2>The knowledge sources</h2>
+      <div class="layer-tagline">How the system connects to the tools where your company's knowledge already lives</div>
+    </div>
+  </div>
+
+  <div class="what-it-does">
+    <div class="section-label">What this layer does</div>
+    <p>The AI can only answer questions about what it has access to. Connectors are the bridges between this product and the tools where your company's knowledge already lives. Each connector is a secure, authorized link that reads documents from a tool and feeds them into the ingestion pipeline. Connect once — it stays in sync automatically.</p>
+  </div>
+
+  <table class="summary-table">
+    <thead>
+      <tr><th>Connector</th><th>What it indexes</th><th>Best for</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Confluence</td><td>Wiki pages, knowledge base articles, meeting notes, project documentation</td><td>Engineering teams, project-heavy organizations</td></tr>
+      <tr><td>Google Drive</td><td>Google Docs, Sheets summaries, uploaded PDFs and Word docs</td><td>Organizations running on Google Workspace</td></tr>
+      <tr><td>Notion</td><td>Pages, databases, nested documents, team wikis</td><td>Startups, creative agencies, product teams</td></tr>
+      <tr><td>GitHub</td><td>README files, markdown documentation, code comments, ADRs</td><td>Engineering teams, technical documentation</td></tr>
+      <tr><td>Jira</td><td>Issue descriptions, comments, resolution notes, epic summaries</td><td>Teams wanting to query past bug reports and decisions</td></tr>
+      <tr><td>Zendesk</td><td>Support tickets, resolved issues, help center articles</td><td>Customer support teams, operations</td></tr>
+      <tr><td>SharePoint</td><td>Documents, pages, document libraries</td><td>Enterprise organizations on Microsoft 365</td></tr>
+      <tr><td>Slack/Teams</td><td>Message history, pinned posts, shared files</td><td>Organizations with important decisions made in chat</td></tr>
+    </tbody>
+  </table>
+
+  <div class="analogy">
+    <div class="analogy-label">How connectors work — the librarian analogy</div>
+    <p>Imagine giving a librarian a special key to your company's filing rooms — one key for the Confluence room, one for the Google Drive room, one for Jira. The librarian visits each room every 4 hours, reads anything new or updated, makes detailed index cards, and files them in a central catalogue. When someone asks a question, the librarian searches the catalogue — not the original filing rooms — so the search is instant regardless of how many filing rooms exist.</p>
+  </div>
+
+  <div class="user-story" style="border-color:var(--gray)">
+    "A policy organization has documents in Google Drive (research reports), Confluence (internal processes), and Notion (team wiki). An analyst asks: 'What position do we have on federal data privacy regulation?' The system searches across all three sources simultaneously, finds relevant passages in a Drive report from 2023, and answers with the citation. The analyst didn't need to know where to look — the system knew."
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- FAQ FOR STAKEHOLDERS -->
+<div style="margin-bottom:48px">
+  <h2 style="font-family:var(--serif);font-size:28px;font-weight:400;margin-bottom:28px">Questions stakeholders typically ask</h2>
+
+  <div class="faq-item">
+    <div class="faq-q">Is our data safe? Could the AI leak our confidential documents?</div>
+    <div class="faq-a">No. The system is built with this as the primary constraint. Each organization's data is completely isolated from others (your documents are never mixed with another company's). The permission system (Layer 2) ensures each user only gets answers from documents they're already authorized to access in the source systems. And critically — your data is never used to train the underlying AI model.</div>
+  </div>
+
+  <div class="faq-item">
+    <div class="faq-q">What if the AI gives a wrong answer?</div>
+    <div class="faq-a">Every answer includes a confidence score (High / Medium / Low) and a direct citation linking back to the source passage. Users are expected to verify Medium and Low confidence answers. Importantly, when the system can't find relevant information in the connected documents, it says so clearly — it doesn't guess or fabricate. The audit log also records every answer given, so mistakes can be traced and the knowledge gaps that caused them can be filled.</div>
+  </div>
+
+  <div class="faq-item">
+    <div class="faq-q">Do we need to change how we store documents?</div>
+    <div class="faq-a">No. The product connects to the tools you already use — Confluence, Google Drive, Notion, SharePoint, etc. Your team keeps working exactly as they do now. The system reads from those tools automatically in the background. The only requirement is that documents are text-based (the system can read PDFs, Word docs, and web pages).</div>
+  </div>
+
+  <div class="faq-item">
+    <div class="faq-q">How long does it take to set up?</div>
+    <div class="faq-a">Initial setup takes under an hour. An admin connects the first data source (e.g., Google Drive), and the system begins indexing. For a typical organization with 5,000 documents, the first full index completes in 2–4 hours. After that, syncing is continuous and automatic — any document updated in Drive is reflected in the system within 4 hours.</div>
+  </div>
+
+  <div class="faq-item">
+    <div class="faq-q">What happens if one of the connected services (Confluence, Drive, etc.) goes down?</div>
+    <div class="faq-a">The product continues to work using the last indexed version of all documents. Answers are still given — they're just based on data that was accurate as of the last successful sync. The admin dashboard shows the last sync time for each connector, so admins know how current the data is.</div>
+  </div>
+
+  <div class="faq-item">
+    <div class="faq-q">Could a competitor or attacker access our data?</div>
+    <div class="faq-a">The data layer uses enterprise-grade security: all data is encrypted at rest (AES-256) and in transit (TLS 1.3). Each organization's data is in logically isolated tables with row-level security enforced at the database layer. Access is only possible via authenticated API calls. The system is designed for SOC 2 Type II compliance, which requires annual independent security audits.</div>
+  </div>
+</div>
+
+<!-- SUMMARY TABLE -->
+<h2 style="font-family:var(--serif);font-size:28px;font-weight:400;margin-bottom:20px">Summary: the six layers at a glance</h2>
+<table class="summary-table">
+  <thead>
+    <tr><th>Layer</th><th>What it is</th><th>What it means for the business</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1 — Client</td><td>The apps, dashboards, and Slack bot that users interact with</td><td>Determines adoption — if the product is easy to use, teams will use it daily</td></tr>
+    <tr><td>2 — Auth & Gateway</td><td>Security checkpoint, permissions, rate limiting</td><td>Ensures compliance, prevents data leaks, enables enterprise sales</td></tr>
+    <tr><td>3 — App Services</td><td>Query handling, document processing, syncing, billing</td><td>The operational backbone — keeps everything running reliably and up to date</td></tr>
+    <tr><td>4 — AI / RAG Pipeline</td><td>The intelligence that turns questions into cited answers</td><td>The core value proposition — what makes answers trustworthy and verifiable</td></tr>
+    <tr><td>5 — Data Layer</td><td>Six specialized databases storing everything the system knows</td><td>Performance, reliability, and the ability to scale to millions of documents</td></tr>
+    <tr><td>6 — Connectors</td><td>Bridges to Confluence, Drive, Notion, GitHub, Jira, etc.</td><td>Determines breadth — more connected sources = more questions answered correctly</td></tr>
+  </tbody>
+</table>
+
+</div>
+</body>
+</html>

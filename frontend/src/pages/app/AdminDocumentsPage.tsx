@@ -4,9 +4,8 @@ import { AdminNav } from "../../components/AdminNav";
 import { AdminTopbar } from "../../components/AdminTopbar";
 import { AdminPermissionGuard } from "../../components/AdminPermissionGuard";
 import { RequireAdmin } from "../../components/RequireAdmin";
-import { useAuth } from "../../context/AuthContext";
+import { useAdminOrgScope } from "../../hooks/useAdminOrgScope";
 
-type Org = { id: string; name: string };
 type Ws = { id: string; name: string };
 type DocRow = {
   id: string;
@@ -22,34 +21,13 @@ type DocRow = {
 };
 
 export function AdminDocumentsPage() {
-  const { user } = useAuth();
-  const [orgs, setOrgs] = useState<Org[]>([]);
+  const { orgs, orgId, onOrgChange, err: scopeErr } = useAdminOrgScope();
   const [workspaces, setWorkspaces] = useState<Ws[]>([]);
-  const [orgId, setOrgId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
   const [q, setQ] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [rows, setRows] = useState<DocRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    void api
-      .get<Org[]>("/organizations/me")
-      .then((r) => {
-        setOrgs(r.data);
-        if (!orgId && r.data[0]) {
-          setOrgId(r.data[0].id);
-        }
-      })
-      .catch((e) => setErr(apiErrorMessage(e)));
-  }, [orgId]);
-
-  useEffect(() => {
-    if (!user) return;
-    if (!user.is_platform_owner && !orgId && user.org_ids_as_owner?.[0]) {
-      setOrgId(user.org_ids_as_owner[0]);
-    }
-  }, [user, orgId]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -129,11 +107,11 @@ export function AdminDocumentsPage() {
               + Upload files
             </button>
           </div>
-          {err && <p className="sk-error">{err}</p>}
+          {(err || scopeErr) && <p className="sk-error">{err || scopeErr}</p>}
           <div className="sk-panel sk-spaced" style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "1fr 1fr 1fr auto" }}>
             <div>
               <label className="sk-label">Organization</label>
-              <select className="sk-input" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+              <select className="sk-input" value={orgId} onChange={(e) => onOrgChange(e.target.value)}>
                 {orgs.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.name}

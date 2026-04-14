@@ -27,6 +27,8 @@ Initial packaging is **Docker Compose**:
 - `workspaces`
 - `workspace_members`
 
+**Users and roles** (platform vs org vs workspace) are defined in [ROLES_AND_USERS.md](./ROLES_AND_USERS.md).
+
 This gives SKP two isolation layers:
 1. organization boundary for tenant ownership
 2. workspace boundary for document/chat scope inside a tenant

@@ -6,12 +6,12 @@
 
 ## Mandatory reads before shipping code (Forge)
 
-1. `PRODUCT_REQUIREMENTS.md`  
-2. `MVP_IMPLEMENTATION_PLAN.md`  
-3. `DELIVERY_SPEC.md`  
-4. `ARCHITECTURE.md`  
+1. `PRODUCT_REQUIREMENTS.md`
+2. `MVP_IMPLEMENTATION_PLAN.md`
+3. `DELIVERY_SPEC.md`
+4. `ARCHITECTURE.md`
 
-Implementation order defaults to **`MVP_IMPLEMENTATION_PLAN.md`** unless King explicitly reprioritizes.
+Implementation order defaults to `**MVP_IMPLEMENTATION_PLAN.md`** unless King explicitly reprioritizes.
 
 ## Default real-project root
 
@@ -27,6 +27,7 @@ Use this folder for actual project repositories and codebases:
 ## Git rule
 
 When working on a real project:
+
 1. Prefer creating or using a repo under `C:\Users\Yeshi\ProjectRepo`.
 2. Commit and push in the **project repo**, not in `.openclaw`, unless the change is to agent workspace docs.
 3. Keep architecture and planning docs in `workspace-architect` unless the user wants project-local docs duplicated in the project repo.
@@ -38,7 +39,9 @@ For the Sovereign Knowledge Platform codebase, use something like:
 - `C:\Users\Yeshi\ProjectRepo\sovereign-knowledge-platform`
 
 Then use normal Git workflow there:
+
 - `git init` or existing repo
 - `git add .`
 - `git commit -m "..."`
 - `git push`
+

@@ -1,0 +1,67 @@
+{
+  "run_id": "d7aae836",
+  "base_url": "http://127.0.0.1:8000",
+  "verified_health": {
+    "status": "ok"
+  },
+  "verified_openapi_paths": [
+    "/chat/sessions/{session_id}/messages",
+    "/chat/workspaces/{workspace_id}/sessions",
+    "/config/public",
+    "/documents/ingestion-jobs/{job_id}",
+    "/documents/workspaces/{workspace_id}/search",
+    "/documents/workspaces/{workspace_id}/upload",
+    "/documents/{document_id}"
+  ],
+  "ollama_preflight": {
+    "ollama_base": "http://127.0.0.1:11434",
+    "embedding_model": "nomic-embed-text",
+    "model_count": 4
+  },
+  "org_id": "048cab05-ccc2-4935-b7e9-4fced80ac9f3",
+  "workspace_with_evidence_id": "1b80e992-2779-4b07-a5af-92f740c58c01",
+  "isolated_workspace_id": "0c6b45a0-5578-4f71-b390-87cc26e95f8a",
+  "upload": {
+    "ingestion_job_id": "0ec5e870-39be-46b6-93d6-02387091b25f",
+    "document_id": "b3234a51-6f51-4e58-a41d-f8873c91fb78",
+    "organization_id": "048cab05-ccc2-4935-b7e9-4fced80ac9f3",
+    "workspace_id": "1b80e992-2779-4b07-a5af-92f740c58c01",
+    "filename": "smoke-evidence.pdf",
+    "status": "indexed",
+    "page_count": 1,
+    "chunk_count": 1,
+    "checksum_sha256": "6c8d34c9d8a2bb7c235098b3e8c3a0fd5926c1c4a2243f261b6b76eda6944e0c",
+    "storage_path": "/app/data/documents/1b80e992-2779-4b07-a5af-92f740c58c01/53a82100-005f-4dda-a706-ea393fd037a4-smoke-evidence.pdf",
+    "chunks": [
+      {
+        "chunk_index": 0,
+        "page_number": 1,
+        "char_count": 285,
+        "content_preview": "Sovereign Knowledge Platform smoke test document. Project Atlas retention period is 45 days. The escalation owner is Alice Example. Customer support hours are 9..."
+      }
+    ]
+  },
+  "search_top_hit_score": 0.6904014143229731,
+  "search_hit_count": 1,
+  "chat_session_id": "944a12e6-9dc3-4c82-b137-48dae494d82e",
+  "hit_question": "What is the Project Atlas retention period?",
+  "hit_answer": "Answer grounded in retrieved workspace documents for: What is the Project Atlas retention period?\n[1] smoke-evidence.pdf, page 1: Sovereign Knowledge Platform smoke test document. Project Atlas retention period is 45 days. The escalation owner is Alice Example. Customer support hours are 9 AM to 5 PM Eastern on weekdays. This PDF exists only to prove ingestion, retrieval, chat citations, and workspace isolation.",
+  "hit_citation_count": 1,
+  "no_hit_question": "What is the office snack policy?",
+  "no_hit_answer": "I don't know based on the documents in this workspace.",
+  "isolated_answer": "I don't know based on the documents in this workspace.",
+  "persisted_message_roles": [
+    "user",
+    "assistant",
+    "user",
+    "assistant"
+  ],
+  "db_checks": {
+    "ws1_message_count": 4,
+    "ws2_message_count": 2,
+    "ws1_document_count": 1,
+    "ws1_chunk_count": 1,
+    "ws2_chunk_count": 0
+  },
+  "verified_at_epoch": 1775709664.0681117
+}

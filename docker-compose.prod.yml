@@ -1,0 +1,83 @@
+# Production-shaped stack: Postgres (pgvector), Redis, API, static UI (nginx).
+# Ollama stays on the host or use docker-compose.gpu.yml — point EMBEDDING_OLLAMA_BASE_URL at it.
+# Open the app at http://localhost:${WEB_PORT:-8080} (UI proxies /api to the API).
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env up --build
+#
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skp}
+      POSTGRES_DB: ${POSTGRES_DB:-skp}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - skp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-skp} -d ${POSTGRES_DB:-skp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - skp_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://skp:skp@postgres:5432/skp}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-sovereign-knowledge-platform}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_JSON: ${LOG_JSON:-true}
+      DOCUMENT_STORAGE_ROOT: /app/data/documents
+      EMBEDDING_OLLAMA_BASE_URL: ${EMBEDDING_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      ANSWER_GENERATION_OLLAMA_BASE_URL: ${ANSWER_GENERATION_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_HTTP_TIMEOUT_SECONDS: ${OLLAMA_HTTP_TIMEOUT_SECONDS:-180}
+      CHAT_MIN_CITATION_SCORE: ${CHAT_MIN_CITATION_SCORE:-0.30}
+      CHAT_LEXICAL_OVERLAP_MIN: ${CHAT_LEXICAL_OVERLAP_MIN:-0.10}
+      SEED_PLATFORM_OWNER_EMAIL: ${SEED_PLATFORM_OWNER_EMAIL:-owner@example.com}
+      SEED_PLATFORM_OWNER_PASSWORD: ${SEED_PLATFORM_OWNER_PASSWORD:?set owner password}
+    volumes:
+      - skp_documents:/app/data/documents
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  skp_pgdata:
+  skp_redis:
+  skp_documents:

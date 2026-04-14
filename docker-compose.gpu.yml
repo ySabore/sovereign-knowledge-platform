@@ -1,0 +1,118 @@
+services:
+  postgres:
+    restart: unless-stopped
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skp}
+      POSTGRES_DB: ${POSTGRES_DB:-skp}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - skp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-skp} -d ${POSTGRES_DB:-skp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    restart: unless-stopped
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - skp_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Optional: use --profile bundled-ollama when you want Ollama inside Compose.
+  # Otherwise set EMBEDDING_OLLAMA_BASE_URL / ANSWER_GENERATION_OLLAMA_BASE_URL to host.docker.internal:11434 (Windows/Mac Docker Desktop).
+  ollama:
+    profiles:
+      - bundled-ollama
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    # Compose v2 GPU (Docker Desktop + NVIDIA on Windows/WSL2)
+    gpus: all
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://skp:skp@postgres:5432/skp}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-sovereign-knowledge-platform}
+      CLERK_ENABLED: ${CLERK_ENABLED:-false}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_AUDIENCE: ${CLERK_AUDIENCE:-}
+      CLERK_JWT_LEEWAY_SECONDS: ${CLERK_JWT_LEEWAY_SECONDS:-120}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_JSON: ${LOG_JSON:-true}
+      DOCUMENT_STORAGE_ROOT: /app/data/documents
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_OLLAMA_BASE_URL: ${EMBEDDING_OLLAMA_BASE_URL:-http://ollama:11434}
+      ANSWER_GENERATION_PROVIDER: ${ANSWER_GENERATION_PROVIDER:-extractive}
+      ANSWER_GENERATION_MODEL: ${ANSWER_GENERATION_MODEL:-llama3.2}
+      ANSWER_GENERATION_OLLAMA_BASE_URL: ${ANSWER_GENERATION_OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_HTTP_TIMEOUT_SECONDS: ${OLLAMA_HTTP_TIMEOUT_SECONDS:-180}
+      CHAT_MIN_CITATION_SCORE: ${CHAT_MIN_CITATION_SCORE:-0.30}
+      CHAT_LEXICAL_OVERLAP_MIN: ${CHAT_LEXICAL_OVERLAP_MIN:-0.10}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
+      NANGO_HOST: ${NANGO_HOST:-https://api.nango.dev}
+      SEED_PLATFORM_OWNER_EMAIL: ${SEED_PLATFORM_OWNER_EMAIL:-owner@example.com}
+      SEED_PLATFORM_OWNER_PASSWORD: ${SEED_PLATFORM_OWNER_PASSWORD:?set owner password}
+    volumes:
+      - skp_documents:/app/data/documents
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  skp_pgdata:
+  skp_redis:
+  skp_documents:
+  ollama_data:

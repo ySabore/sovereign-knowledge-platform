@@ -56,7 +56,19 @@ All server options are loaded from **environment variables** (and optionally `.e
 | `CLERK_ISSUER` | *(empty)* | Clerk **Frontend API** URL, e.g. `https://your-instance.clerk.accounts.dev` (used as JWT `iss` and JWKS URL `{issuer}/.well-known/jwks.json`). |
 | `CLERK_AUDIENCE` | *(empty)* | If set, JWT `aud` is verified; omit for default session tokens. |
 
-Apply migration `003` so `users.clerk_user_id` exists. In Clerk Dashboard → **Sessions** → **Customize session token**, include an `email` claim so first-time users can be provisioned or linked by email.
+Apply migration `003` so `users.clerk_user_id` exists. Clerk’s default session JWT does **not** include a usable email string—only `sub` (user id). Without an email claim, the API cannot link or create a user and `/auth/me` returns **401**.
+
+In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON such as:
+
+```json
+{
+  "email": "{{user.primary_email_address.email_address}}"
+}
+```
+
+(or `"primaryEmail": "{{user.primary_email_address.email_address}}"`). Save, then sign out and back in so a new JWT is minted.
+
+**Docker / self-hosted:** set `CLERK_ENABLED=true` and `CLERK_ISSUER` to your Clerk **Frontend API** URL (Dashboard → **API keys** → *Frontend API URL / issuer*), then restart the API. If `CLERK_ENABLED` is `false`, Clerk JWTs are rejected.
 
 ---
 
@@ -131,6 +143,8 @@ Apply migration `003` so `users.clerk_user_id` exists. In Clerk Dashboard → **
 |----------|-------------|
 | `SEED_PLATFORM_OWNER_EMAIL` | Owner email for `scripts/seed.py`. |
 | `SEED_PLATFORM_OWNER_PASSWORD` | Owner password for seed. |
+
+**Clerk users** are created with `is_platform_owner=false`. To make your Clerk account the platform owner after it exists in `users`, run `PROMOTE_PLATFORM_OWNER_EMAIL=you@example.com python scripts/promote_platform_owner.py` (same `DATABASE_URL` as the API), or from Docker: `docker compose exec -e PROMOTE_PLATFORM_OWNER_EMAIL=you@example.com api python scripts/promote_platform_owner.py`. Alternatively, sign in with Clerk using the **same email** as `SEED_PLATFORM_OWNER_EMAIL` *before* that row exists, or `UPDATE users SET is_platform_owner = true WHERE email = '…'` in Postgres.
 | `SEED_DEMO_WORKSPACE` | Set `true` for optional `scripts/seed_demo_workspace.py`. |
 
 ---

@@ -1,18 +1,42 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export function AdminNav({ title = "Admin" }: { title?: string }) {
+  const loc = useLocation();
+  const on = (path: string) => (loc.pathname === path ? " on" : "");
   return (
-    <aside className="sk-nav">
-      <h1 style={{ fontSize: "1rem" }}>{title}</h1>
-      <nav className="sk-stack" style={{ marginTop: "1rem", fontSize: "0.9rem" }}>
-        <Link to="/admin">Overview</Link>
-        <Link to="/admin/connectors">Connectors</Link>
-        <Link to="/admin/documents">Documents</Link>
-        <Link to="/admin/team">Team</Link>
-        <Link to="/admin/billing">Billing</Link>
-        <Link to="/admin/audit">Audit log</Link>
-        <Link to="/admin/settings">Settings</Link>
-        <Link to="/home">← App</Link>
+    <aside className="ska-sidebar">
+      <div className="ska-title">{title}</div>
+      <nav>
+        <div className="ska-group">Overview</div>
+        <Link className={`ska-item${on("/admin")}`} to="/admin">
+          Dashboard
+        </Link>
+        <Link className={`ska-item${on("/admin/team")}`} to="/admin/team">
+          Team <span className="ska-dot">●</span>
+        </Link>
+
+        <div className="ska-group">Knowledge</div>
+        <Link className={`ska-item${on("/admin/documents")}`} to="/admin/documents">
+          Documents
+        </Link>
+        <Link className={`ska-item${on("/admin/connectors")}`} to="/admin/connectors">
+          Connectors
+        </Link>
+
+        <div className="ska-group">Enterprise</div>
+        <Link className={`ska-item${on("/admin/billing")}`} to="/admin/billing">
+          Billing
+        </Link>
+        <Link className={`ska-item${on("/admin/audit")}`} to="/admin/audit">
+          Audit log
+        </Link>
+        <Link className={`ska-item${on("/admin/settings")}`} to="/admin/settings">
+          Settings
+        </Link>
+
+        <Link className="ska-item" to="/home">
+          ← App
+        </Link>
       </nav>
     </aside>
   );
