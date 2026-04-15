@@ -23,6 +23,7 @@ This folder is organized by purpose.
 - `architecture/INGESTION_AND_RETRIEVAL.md` — ingestion and retrieval pipeline
 - `architecture/ROLES_AND_USERS.md` — roles, users, and access model
 - `architecture/TECHDECISIONS.md` — technical decisions
+- `architecture/FRONTEND_ARCHITECTURE.md` — current frontend architecture map
 - `architecture/FRONTEND_REFACTOR_PLAN_HOMEPAGE.md` — targeted frontend cleanup plan
 
 ### Operations
