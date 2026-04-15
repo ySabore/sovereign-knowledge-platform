@@ -1,75 +1,76 @@
-# SPRINT.md — Week of April 6-12, 2026
+# SPRINT.md — Current Execution Sprint
 
-## Current Sprint Goals
-1. Verify E2E happy path after broad repo expansion (✓ smoke JSON verified 2026-04-09)
-2. Complete Vite frontend `/organizations` page verification across seeded roles
-3. Address missing `/admin/*` endpoints for live admin panel functionality
-4. Clean up and commit the broad working tree
+*Last updated: 2026-04-15 America/New_York*
 
-## Today's Focus (Friday, April 10, 2026) — 12:14 PM Update
+## Sprint window
+- **Sprint start:** 2026-04-15
+- **Sprint focus window:** documentation consolidation, architecture clarity, and repo hygiene support for the current SKP codebase
 
-### Past 24h Summary
-- Fresh backend smoke proof generated: `data/smoke/E2E_CHAT_SMOKE_2026-04-09.json`
-- **Admin endpoints VERIFIED LIVE**: `/admin/metrics/summary`, `/admin/documents/{org_id}`, `/admin/connectors/{org_id}`, `/admin/audit/{org_id}` all registered and responding
-- Cross-agent visibility fixed in OpenClaw config
-- Model confirmed: `ollama/qwen3-coder:30b`
+## Sprint goal
+Create a clean, current, trustworthy documentation set that matches the actual implementation, reduces drift, and makes the repo easier to operate, explain, and continue building.
 
-### Blockers Identified (UPDATED)
-1. ~~Missing admin endpoints~~ **RESOLVED** — endpoints exist and are live
-2. **Frontend verification incomplete**: `/organizations` page not fully validated across seeded roles
-3. **RBAC concern**: org membership reads appearing too permissive across roles (needs validation)
+## What is already complete in this sprint
 
-### 3 Coding Goals for Today (UPDATED)
-1. **Verify `/admin/documents/{org_id}` endpoint** with live API call — confirm it returns expected data
-2. **Verify `/admin/metrics/summary` endpoint** with live API call — confirm dashboard data shape
-3. **Verify `/organizations` frontend page** across all seeded roles (owner, member, workspace admin)
+### Architecture documentation refresh
+- Updated top-level architecture to reflect the live codebase
+- Updated technical decisions to match current implementation reality
+- Added a full codebase map
+- Added an ingestion and retrieval architecture document
+- Added a targeted frontend refactor plan for `HomePage.tsx`
 
-## Task Registry
+### Documentation truth correction
+- Identified major drift between old root-level status docs and current implementation
+- Confirmed current implementation is materially ahead of older MVP wording in several areas
+- Established clearer distinction between:
+  - product docs
+  - planning docs
+  - architecture docs
+  - deliverable/status docs
 
-| ID | Task | Status | Owner | Notes |
-|----|------|--------|-------|-------|
-| T1 | Fresh E2E smoke proof | ✅ Done | Forge | 2026-04-09.json verified |
-| T2 | `/organizations` page verification | 🔄 In Progress | — | Shift to priority |
-| T3 | ~~Missing `/admin/documents` endpoint~~ | ✅ **EXISTS** | — | Code inspection + live OpenAPI confirms |
-| T4 | ~~Missing `/admin/metrics` endpoint~~ | ✅ **EXISTS** | — | Code inspection + live OpenAPI confirms |
-| T5 | Live API verification of admin endpoints | 🔄 In Progress | — | Test with real auth tokens |
-| T6 | RBAC membership audit | ⏳ Blocked | — | After T5 |
-| T7 | Working tree cleanup + commit | ⏳ Blocked | — | After verification |
+## Active sprint objectives
 
-## Live API Status (as of 12:14 PM)
-- ✅ Backend running on localhost:8000
-- ✅ `/health` returns ok
-- ✅ OpenAPI shows `/admin/*` routes registered:
-  - `GET /admin/metrics/summary`
-  - `GET /admin/connectors/{organization_id}`
-  - `GET /admin/documents/{organization_id}`
-  - `GET /admin/audit/{organization_id}`
+### 1. Consolidate and clean documentation structure
+- convert stale duplicate root docs into pointers
+- define canonical source-of-truth locations
+- reduce multi-file status drift
+- remove or quarantine outdated/low-value documents where safe
 
-## Next Actions
-1. Test `/admin/documents/{org_id}` with seeded owner token
-2. Test `/admin/metrics/summary` with seeded owner token
-3. Proceed to frontend `/organizations` page verification
+### 2. Refresh current execution docs
+- update `planning/SPRINT.md`
+- update `planning/NEXT_TASK.md`
+- align roadmap and status framing with current code truth
+- keep `deliverables/PHASE_STATUS.md` consistent with actual implementation
 
-## 4:00 PM — Afternoon Status Update
+### 3. Improve feature documentation clarity
+- make current capabilities easier to find
+- make architecture easier to follow
+- separate historical artifacts from living docs
+- clarify what is implemented vs what is planned
 
-### Progress Since Midday
-**No new progress recorded.** The live API verification tasks identified at 12:14 PM remain pending:
-- `/admin/documents/{org_id}` endpoint — NOT yet tested with live JWT tokens
-- `/admin/metrics/summary` endpoint — NOT yet tested with live JWT tokens
-- Frontend `/organizations` page — NOT yet verified across seeded roles
+### 4. Prepare for subsequent engineering cleanup
+- create a documentation base strong enough to support frontend refactor work
+- reduce ambiguity before working-tree cleanup and commit organization
 
-### Blockers
-**No new blockers**, but verification work is stalled. The backend is confirmed running (confirmed at 12:14 PM), but no actual API calls with authentication have been executed since then.
+## In progress now
+- docs consolidation and duplicate reduction
+- sprint/status doc refresh
+- docs index and canonical-file rules
 
-### Afternoon Plan Adjustment
-Given it's now 4:00 PM and no verification work has occurred:
-1. **Immediate priority:** Execute live API verification (15 min task)
-2. **If time permits:** Quick frontend smoke check
-3. **Acceptance:** May need to carry verification tasks to Monday if not completed today
+## Next after this sprint slice
+1. review remaining outdated docs for merge/remove decisions
+2. refresh feature-facing docs for connectors, admin surfaces, and chat behavior
+3. review `deliverables/PHASE_STATUS.md` and `README.md` for wording drift around ingestion scope
+4. optionally begin implementation of the `HomePage.tsx` refactor plan
 
-### Risk Assessment
-- **Low risk** — Endpoints exist and are confirmed live
-- **Medium risk** — Frontend integration gap remains unvalidated
-- **Recommendation:** Complete at least one live API call before end of day to confirm auth flow works
+## Risks
+- older docs still reference earlier product assumptions, especially around PDF-only MVP framing
+- demo assets under `docs/demo/` are large and noisy, so cleanup should be selective and careful
+- broad working tree changes mean documentation updates should avoid creating confusion about code status
 
-Updated: 2026-04-10 4:00 PM
+## Definition of done for this sprint slice
+- there is one obvious place to find current sprint status
+- there is one obvious place to find current next task
+- there is one obvious place to find product roadmap
+- architecture docs reflect current implementation reality
+- stale root duplicates are reduced to pointers or removed safely
+- documentation is substantially easier to navigate than before

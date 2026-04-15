@@ -1,32 +1,10 @@
-# ROADMAP.md — Sovereign Knowledge Platform
+# ROADMAP.md — Pointer
 
-## v1 — Demoable Core
+Canonical product roadmap:
+- [`product/ROADMAP.md`](./product/ROADMAP.md)
 
-- document upload
-- parsing / chunking
-- embeddings
-- vector storage
-- retrieval
-- chat UI
-- grounded Q&A
-- Dockerized local deployment
-- basic setup docs
+Why this file exists:
+- compatibility for older references
+- quick discoverability from the docs root
 
-## v2 — Client-Ready Product
-
-- auth
-- user/workspace boundaries
-- admin panel
-- ingestion jobs / status
-- observability
-- configuration hardening
-- deployment options
-
-## v3 — Operational Packaging
-
-- appliance deployment option
-- backup / restore
-- maintenance dashboard
-- support runbooks
-- upgrade strategy
-- operational tooling
+Do not maintain roadmap content in both places. Update `product/ROADMAP.md` only.
