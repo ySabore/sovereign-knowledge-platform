@@ -8,7 +8,7 @@ Deliver a working MVP for a local, **multi-tenant** RAG platform with:
 
 - multi-organization support  
 - workspace isolation  
-- **PDF-only** ingestion (MVP1)  
+- **PDF-first** ingestion for MVP1 positioning  
 - grounded chat with citations  
 - **exact** fallback when evidence is insufficient  
 - Docker Compose deployment  
@@ -31,7 +31,7 @@ Lock before heavy coding:
 - FastAPI for backend.  
 - Ollama for embeddings (and generation or compatible local serving).  
 - Docker Compose (not Kubernetes for MVP).  
-- PDF-only ingestion for MVP1.
+- PDF-first ingestion for MVP1 packaging, even if implementation broadens internally.
 
 ### Phase 1: Backend foundation
 
@@ -45,11 +45,11 @@ Orgs, workspaces, membership endpoints with authz and audit logging for sensitiv
 
 **Exit:** platform owner creates orgs; org owner creates workspaces; users attach to workspaces.
 
-### Phase 3: PDF ingestion pipeline
+### Phase 3: Ingestion pipeline
 
-Upload, storage, job/status lifecycle, parse PDF, chunk, embed, pgvector writes with org/workspace metadata.
+Upload/storage, job/status lifecycle, parse and normalize source content, chunk, embed, pgvector writes with org/workspace metadata.
 
-**Exit:** PDF reaches indexed state; failures observable; vectors scoped correctly.
+**Exit:** the primary pilot ingestion path reaches indexed state; failures are observable; vectors remain correctly scoped.
 
 ### Phase 4: Chat and retrieval
 

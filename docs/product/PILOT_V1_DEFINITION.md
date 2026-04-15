@@ -26,8 +26,11 @@ Teams lose time hunting through PDFs, SOPs, policy documents, proposals, manuals
 **V1 principle:** one workspace, one document collection, one high-value internal use case, one trusted answer path.
 
 ## 4) Input data types
-**Included in pilot v1:**
-- PDF documents only
+**Pilot positioning for v1:**
+- PDF-first
+
+**Implementation note:**
+The current codebase has moved beyond strict PDF-only handling in several ingestion paths, but the recommended pilot story remains **PDF-first** because it is easier to explain, validate, support, and demo cleanly.
 
 **Recommended pilot document set:**
 - SOPs
@@ -37,7 +40,7 @@ Teams lose time hunting through PDFs, SOPs, policy documents, proposals, manuals
 - process documentation
 - compliance/reference binders exported as PDF
 
-Keeping inputs to PDF-only makes the pilot easier to explain, operate, and support.
+This keeps the pilot easier to operate even though the underlying platform is already evolving toward broader ingestion support.
 
 ## 5) Demo flow
 **10-minute buyer demo:**
@@ -70,18 +73,20 @@ Why this is the right first sale:
 - optional managed hosting if the customer is comfortable with it
 
 ## 7) Explicit out-of-scope items
-To keep v1 saleable and finishable, **exclude**:
-- Google Drive, SharePoint, Jira, Confluence, Bitbucket, email, or other connectors
+To keep v1 saleable and finishable, **exclude from the pilot promise**:
+- Google Drive, SharePoint, Jira, Confluence, Bitbucket, email, or other connectors as required pilot commitments
 - web crawling / internet search
-- OCR / scanned-document recovery
-- DOCX, spreadsheets, images, audio, or video ingestion
+- OCR / scanned-document recovery as a required promise
+- broad multi-format ingestion as a required pilot promise
 - advanced admin analytics dashboards
 - agent workflows / task automation
 - cross-tenant shared platform operations for the first customer deployment
 - enterprise SSO / SCIM
 - billing/self-serve provisioning
-- model routing / advanced retrieval tuning
+- model routing / advanced retrieval tuning as a required sales promise
 - broad company-wide rollout beyond the pilot team
+
+Important nuance: some of these surfaces may already exist partially in the codebase, but they should not be treated as committed pilot-scope promises unless explicitly packaged and validated.
 
 ## 8) Crisp v1 positioning paragraph
 **Sovereign Knowledge Platform v1** is a private AI knowledge assistant for teams that need fast, trustworthy answers from internal documents without exposing company knowledge to public AI tools. For the first pilot, it focuses on one high-value use case: upload a curated set of PDFs, ask natural-language questions, and get grounded answers with citations inside a customer-controlled deployment. It is intentionally narrow: private, reliable, and easy to prove in a real business workflow.

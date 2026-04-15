@@ -6,7 +6,7 @@ Non-negotiable delivery contract for **Sovereign Knowledge Platform**, absorbed 
 
 ## Goal
 
-Build a production-leaning MVP: **multi-tenant**, self-hosted where specified, **strict tenant isolation**, workspace-scoped access, **PDF ingestion (MVP1)**, grounded chat with citations, and when evidence is insufficient respond **exactly**:
+Build a production-leaning MVP: **multi-tenant**, self-hosted where specified, **strict tenant isolation**, workspace-scoped access, **PDF-first ingestion for MVP1 packaging**, grounded chat with citations, and when evidence is insufficient respond **exactly**:
 
 `I don't know based on the documents in this workspace.`
 
@@ -27,7 +27,7 @@ Build a production-leaning MVP: **multi-tenant**, self-hosted where specified, *
 1. Platform owner creates organizations.  
 2. Org owner creates workspaces and invites users.  
 3. Roles: `platform_owner`, `org_owner`, `workspace_admin`, `member`.  
-4. PDF-only upload (MVP1).  
+4. PDF-first upload path for MVP1.  
 5. Parse, chunk, embed, index with org/workspace metadata on chunks.  
 6. Retrieval **always** filtered by `org_id` and `workspace_id`.  
 7. Chat returns citations; insufficient evidence → exact fallback string.  
@@ -38,7 +38,9 @@ Build a production-leaning MVP: **multi-tenant**, self-hosted where specified, *
 
 ## MVP excludes
 
-External connectors (Drive/Jira/etc.), billing, SSO (MVP1), web search, multimodal OCR, Kubernetes, public embed widget, heavy analytics.
+External connectors (Drive/Jira/etc.) as required MVP commitments, billing as a required MVP commitment, SSO (MVP1), web search, multimodal OCR as a required commitment, Kubernetes, public embed widget, heavy analytics.
+
+Important nuance: implementation may contain partial or emerging surfaces beyond the strict MVP promise. Packaging and documentation should distinguish between what exists in code and what is committed as supported MVP scope.
 
 ## Authorization rules
 
