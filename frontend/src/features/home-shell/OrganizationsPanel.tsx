@@ -125,6 +125,7 @@ export function OrganizationsPanel({
   loadOrgs,
   api,
   OrgDetailView,
+  onLaunchWorkspaceChat,
 }: OrganizationsPanelProps) {
   const C = useOrgShellTokens();
   const selectStyle: CSSProperties = {
@@ -279,6 +280,7 @@ export function OrganizationsPanel({
                       if (wsId) setJumpToWsId(wsId);
                       setPanel("workspaces");
                     }}
+                    onLaunchWorkspaceChat={onLaunchWorkspaceChat}
                     onNavigateToWorkspaces={() => setPanel("workspaces")}
                     onNavigateToTeam={() => setPanel("team")}
                     onNavigateToDocuments={() => setPanel("docs")}

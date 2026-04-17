@@ -32,6 +32,7 @@ GenerationMode = Literal[
     "extractive",
     "no_evidence",
     "chitchat",
+    "workspace_stats",
 ]
 
 
@@ -285,6 +286,8 @@ def generation_model_for_mode(
         return chip or settings.anthropic_default_chat_model
     if mode == "extractive":
         return "extractive"
+    if mode == "workspace_stats":
+        return "workspace-metadata"
     if mode == "chitchat":
         return None
     return None

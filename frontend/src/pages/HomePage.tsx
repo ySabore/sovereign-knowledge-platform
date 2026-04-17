@@ -279,6 +279,7 @@ function OrgDetailView({
   onUploadClick,
   onWorkspaceCreated,
   onGoToWorkspace,
+  onLaunchWorkspaceChat,
   onOpenSettings,
   onNavigateToWorkspaces,
   onNavigateToTeam,
@@ -291,6 +292,7 @@ function OrgDetailView({
   onUploadClick: (ws: Workspace) => void;
   onWorkspaceCreated: (wsId?: string) => void;
   onGoToWorkspace: (wsId?: string) => void;
+  onLaunchWorkspaceChat?: (wsId: string) => void;
   onOpenSettings: () => void;
   onNavigateToWorkspaces: () => void;
   onNavigateToTeam: () => void;
@@ -461,6 +463,7 @@ function OrgDetailView({
                 index={i}
                 onUploadClick={onUploadClick}
                 onGoToWorkspace={onGoToWorkspace}
+                onLaunchChat={onLaunchWorkspaceChat}
               />
             ))}
             <NewWorkspaceCard orgId={org.id} onCreated={onWorkspaceCreated} />
@@ -1054,12 +1057,13 @@ const WS_PALETTE = [
 ];
 
 function WorkspaceCard({
-  ws, index, onUploadClick, onGoToWorkspace,
+  ws, index, onUploadClick, onGoToWorkspace, onLaunchChat,
 }: {
   ws: Workspace;
   index: number;
   onUploadClick: (ws: Workspace) => void;
   onGoToWorkspace: (wsId: string) => void;
+  onLaunchChat?: (wsId: string) => void;
 }) {
   const C = useOrgShellTokens();
   const navigate = useNavigate();
@@ -1134,7 +1138,7 @@ function WorkspaceCard({
       <div style={{ display: "flex", gap: 7 }} onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
-          onClick={() => navigate(`/dashboard/${ws.id}`)}
+          onClick={() => (onLaunchChat ? onLaunchChat(ws.id) : navigate(`/dashboard/${ws.id}`))}
           style={{
             flex: 1, padding: "7px 0", borderRadius: 8,
             background: C.accent, border: "none", color: "white",
@@ -1667,6 +1671,8 @@ type AuditEvent = {
   id: string;
   created_at: string | null;
   actor_email: string;
+  actor_role?: string | null;
+  organization_id?: string | null;
   action: string;
   target_type: string;
   target_id: string | null;
@@ -1674,9 +1680,32 @@ type AuditEvent = {
   metadata: Record<string, unknown>;
 };
 
-function parseAuditCategory(value: string | null): "all" | "queries" | "admin" | "auth" | "sync" {
-  if (value === "queries" || value === "admin" || value === "auth" || value === "sync") return value;
+type AuditCategory = "all" | "queries" | "admin" | "auth" | "sync" | "http" | "governance";
+
+function parseAuditCategory(value: string | null): AuditCategory {
+  if (
+    value === "queries"
+    || value === "admin"
+    || value === "auth"
+    || value === "sync"
+    || value === "http"
+    || value === "governance"
+  ) {
+    return value;
+  }
   return "all";
+}
+
+/** Second click on the same category chip clears it (show all events again). */
+function toggleAuditCategory(current: AuditCategory, chip: Exclude<AuditCategory, "all">): AuditCategory {
+  return current === chip ? "all" : chip;
+}
+
+function formatAuditTimestampUtc(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
 function parseAuditFailures(value: string | null): boolean {
@@ -1687,16 +1716,23 @@ function AuditPanel({
   orgs,
   selectedOrgId,
   workspaceScopeIds,
+  workspaces = [],
 }: {
   orgs: Org[];
   selectedOrgId: string;
   workspaceScopeIds?: string[];
+  workspaces?: Workspace[];
 }) {
   const C = useOrgShellTokens();
   const isWorkspaceScopedAudit = !!workspaceScopeIds && workspaceScopeIds.length > 0;
+  const workspaceNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of workspaces) m.set(w.id, w.name);
+    return m;
+  }, [workspaces]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [action, setAction] = useState(() => searchParams.get("auditAction") ?? "");
-  const [category, setCategory] = useState<"all" | "queries" | "admin" | "auth" | "sync">(() =>
+  const [category, setCategory] = useState<AuditCategory>(() =>
     parseAuditCategory(searchParams.get("auditCategory")),
   );
   const [eventSearch, setEventSearch] = useState(() => searchParams.get("auditEvent") ?? "");
@@ -1754,7 +1790,7 @@ function AuditPanel({
     } catch (e) {
       setErr(apiErrorMessage(e));
     }
-  }, [selectedOrgId, action]);
+  }, [selectedOrgId, action, workspaceFilter]);
 
   useEffect(() => {
     void load();
@@ -1789,6 +1825,13 @@ function AuditPanel({
     if (category === "admin" && !(act.includes("org") || act.includes("team") || act.includes("billing") || act.includes("admin"))) return false;
     if (category === "auth" && !(act.includes("auth") || act.includes("login") || act.includes("token"))) return false;
     if (category === "sync" && !(act.includes("sync") || act.includes("connector") || act.includes("document"))) return false;
+    if (category === "http" && act !== "api_http_mutation") return false;
+    if (
+      category === "governance"
+      && !/organization_|workspace_|member_|invite_|document_|connector_|chat_session|api_http_mutation/.test(act)
+    ) {
+      return false;
+    }
     if (eventSearch && !text.includes(eventSearch.toLowerCase())) return false;
     if (userSearch && !actor.includes(userSearch.toLowerCase())) return false;
     if (workspaceFilter !== "all" && (r.workspace_id || "") !== workspaceFilter) return false;
@@ -1798,6 +1841,7 @@ function AuditPanel({
 
   function actionClass(actionName: string) {
     const a = actionName.toLowerCase();
+    if (a === "api_http_mutation") return "sk-action-tag achttp";
     if (a.includes("query")) return "sk-action-tag acq";
     if (a.includes("auth") || a.includes("login")) return "sk-action-tag acau";
     if (a.includes("sync") || a.includes("connector") || a.includes("document")) return "sk-action-tag acs";
@@ -1806,7 +1850,7 @@ function AuditPanel({
 
   function resultBadge(r: AuditEvent) {
     const fail = isFailureEvent(r);
-    return fail ? <span className="badge bred">token_expired</span> : <span className="badge bgreen">success</span>;
+    return fail ? <span className="badge bred">failure</span> : <span className="badge bgreen">recorded</span>;
   }
 
   function severityBadge(r: AuditEvent) {
@@ -1819,12 +1863,15 @@ function AuditPanel({
   function exportCsv() {
     const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const header = [
-      "timestamp",
+      "timestamp_utc",
       "actor_email",
-      "action",
+      "actor_role",
+      "event_type",
+      "organization_id",
       "target_type",
+      "target_id",
       "workspace_id",
-      "result",
+      "outcome",
       "metadata_json",
     ].join(",");
     const body = filteredRows
@@ -1832,10 +1879,13 @@ function AuditPanel({
         [
           escape(r.created_at || ""),
           escape(r.actor_email || "system"),
+          escape(r.actor_role || ""),
           escape(r.action),
+          escape(r.organization_id || ""),
           escape(r.target_type || ""),
+          escape(r.target_id || ""),
           escape(r.workspace_id || ""),
-          escape(isFailureEvent(r) ? "failed" : "success"),
+          escape(isFailureEvent(r) ? "failure" : "recorded"),
           escape(JSON.stringify(r.metadata || {})),
         ].join(","),
       )
@@ -1852,12 +1902,14 @@ function AuditPanel({
   const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name ?? null;
 
   return (
-    <div style={{ padding: "22px 26px", overflowY: "auto", height: "100%" }}>
+    <div className="sk-audit-page" style={{ padding: "22px 26px", overflowY: "auto", height: "100%" }}>
       <div className="sk-panel sk-audit-header">
         <div>
-          <div className="sk-connectors-title">Audit Log</div>
+          <div className="sk-connectors-title">Audit log</div>
           <div className="sk-connectors-sub">
-            Immutable record of all system events{selectedOrgName ? ` · ${selectedOrgName}` : ""}.
+            Append-only style trail for this organization{selectedOrgName ? ` · ${selectedOrgName}` : ""}. Timestamps are
+            stored in UTC. Rows include domain events and successful HTTP mutations when scope can be inferred from the
+            request path.
           </div>
           {isWorkspaceScopedAudit && (
             <div
@@ -1883,9 +1935,25 @@ function AuditPanel({
           Export CSV
         </button>
       </div>
+      <div
+        className="sk-audit-compliance-note"
+        style={{
+          marginBottom: 14,
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: `1px solid ${C.bd}`,
+          background: C.bgE,
+          fontSize: 11,
+          lineHeight: 1.55,
+        }}
+      >
+        <strong>Retention &amp; review:</strong> Use filters and CSV export for periodic access
+        reviews. Correlation: HTTP mutation rows include <span className="sk-mono">request_id</span> when the edge
+        middleware captured it.
+      </div>
       {err && <p className="sk-error">{err}</p>}
       {!selectedOrgId && (
-        <p className="sk-muted">Select an organization first to view the audit log.</p>
+        <p className="sk-audit-empty-hint">Select an organization first to view the audit log.</p>
       )}
       <div className="sk-panel sk-spaced" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: "0.75rem", maxWidth: 980 }}>
         <div>
@@ -1906,7 +1974,7 @@ function AuditPanel({
             <option value="all">All workspaces</option>
             {workspaceOptions.map((id) => (
               <option key={id} value={id}>
-                {id.slice(0, 8)}…
+                {workspaceNameById.get(id) ?? `${id.slice(0, 8)}…`}
               </option>
             ))}
           </select>
@@ -1922,17 +1990,47 @@ function AuditPanel({
         <button type="button" className={`sk-filter-chip ${category === "all" ? "on" : ""}`} onClick={() => setCategory("all")}>
           All events
         </button>
-        <button type="button" className={`sk-filter-chip ${category === "queries" ? "on" : ""}`} onClick={() => setCategory("queries")}>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "queries" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "queries"))}
+        >
           Queries
         </button>
-        <button type="button" className={`sk-filter-chip ${category === "admin" ? "on" : ""}`} onClick={() => setCategory("admin")}>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "admin" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "admin"))}
+        >
           Admin
         </button>
-        <button type="button" className={`sk-filter-chip ${category === "auth" ? "on" : ""}`} onClick={() => setCategory("auth")}>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "auth" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "auth"))}
+        >
           Auth
         </button>
-        <button type="button" className={`sk-filter-chip ${category === "sync" ? "on" : ""}`} onClick={() => setCategory("sync")}>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "sync" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "sync"))}
+        >
           Sync
+        </button>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "governance" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "governance"))}
+        >
+          Governance
+        </button>
+        <button
+          type="button"
+          className={`sk-filter-chip ${category === "http" ? "on" : ""}`}
+          onClick={() => setCategory((c) => toggleAuditCategory(c, "http"))}
+        >
+          HTTP API
         </button>
         <Input value={eventSearch} onChange={setEventSearch} placeholder="Search events..." style={{ maxWidth: 220 }} />
         <button
@@ -1944,31 +2042,41 @@ function AuditPanel({
         </button>
       </div>
 
-      <div className="sk-panel" style={{ overflow: "auto" }}>
+      <div className="sk-panel sk-audit-table-wrap" style={{ overflow: "auto" }}>
         <table className="sk-audit-table">
           <thead>
             <tr>
-              <th>Timestamp</th>
-              <th>User</th>
-              <th>Action</th>
-              <th>Resource</th>
+              <th>Timestamp (UTC)</th>
+              <th>Actor</th>
+              <th>Role</th>
+              <th>Event type</th>
+              <th>Target</th>
+              <th>Workspace</th>
               <th>Severity</th>
-              <th>Result</th>
+              <th>Outcome</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {filteredRows.map((r) => {
               const expanded = expandedId === r.id;
+              const wsLabel = r.workspace_id
+                ? (workspaceNameById.get(r.workspace_id) ?? `${r.workspace_id.slice(0, 8)}…`)
+                : "—";
               return (
                 <Fragment key={r.id}>
                   <tr>
-                    <td>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
-                    <td>{r.actor_email || "system"}</td>
+                    <td className="sk-audit-ts">{formatAuditTimestampUtc(r.created_at)}</td>
+                    <td>{r.actor_email || "—"}</td>
+                    <td className="sk-mono sk-audit-role">{r.actor_role || "—"}</td>
                     <td>
-                      <span className={actionClass(r.action)}>{r.action}</span>
+                      <span className={actionClass(r.action)} title={r.action}>{r.action}</span>
                     </td>
-                    <td className="sk-mono">{r.target_type || "—"}</td>
+                    <td className="sk-mono sk-audit-target">
+                      {r.target_type || "—"}
+                      {r.target_id ? ` · ${r.target_id.slice(0, 8)}…` : ""}
+                    </td>
+                    <td className="sk-audit-ws" title={r.workspace_id || undefined}>{wsLabel}</td>
                     <td>{severityBadge(r)}</td>
                     <td>{resultBadge(r)}</td>
                     <td style={{ textAlign: "right" }}>
@@ -1983,26 +2091,32 @@ function AuditPanel({
                     </td>
                   </tr>
                   {expanded && (
-                    <tr>
-                      <td colSpan={7} style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)" }}>
+                    <tr className="sk-audit-detail-row">
+                      <td colSpan={9} style={{ padding: "10px 12px", background: C.bgE, borderBottom: `1px solid ${C.bd}` }}>
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ fontSize: 11, color: C.t2 }}>
-                            <strong style={{ color: C.t1 }}>Target ID:</strong> {r.target_id || "—"}
+                            <strong style={{ color: C.t1 }}>Organization ID:</strong>{" "}
+                            <span className="sk-mono">{r.organization_id || selectedOrgId || "—"}</span>
                           </div>
                           <div style={{ fontSize: 11, color: C.t2 }}>
-                            <strong style={{ color: C.t1 }}>Workspace ID:</strong> {r.workspace_id || "—"}
+                            <strong style={{ color: C.t1 }}>Target ID:</strong>{" "}
+                            <span className="sk-mono">{r.target_id || "—"}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: C.t2 }}>
+                            <strong style={{ color: C.t1 }}>Workspace ID:</strong>{" "}
+                            <span className="sk-mono">{r.workspace_id || "—"}</span>
                           </div>
                           <div style={{ fontSize: 11, color: C.t2 }}>
                             <strong style={{ color: C.t1 }}>Metadata</strong>
                           </div>
                           <pre
-                            className="sk-mono"
+                            className="sk-mono sk-audit-metadata-pre"
                             style={{
                               margin: 0,
                               fontSize: 11,
                               lineHeight: 1.45,
                               whiteSpace: "pre-wrap",
-                              background: C.bgE,
+                              background: C.bgCard,
                               border: `1px solid ${C.bd}`,
                               borderRadius: 8,
                               padding: "8px 10px",
@@ -2019,7 +2133,7 @@ function AuditPanel({
             })}
           </tbody>
         </table>
-        {filteredRows.length === 0 && <p className="sk-muted">No audit events for this scope.</p>}
+        {filteredRows.length === 0 && <p className="sk-audit-empty-hint">No audit events for this scope.</p>}
       </div>
     </div>
   );
@@ -2276,6 +2390,10 @@ function HomePageContent({
   setBrightMode,
 }: HomePageContentProps) {
   const { user, logout } = useAuth();
+  const isMemberOnlyUser =
+    !user?.is_platform_owner
+    && (user?.org_ids_as_owner ?? []).length === 0
+    && (user?.org_ids_as_workspace_admin ?? []).length === 0;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -2330,27 +2448,30 @@ function HomePageContent({
     orgs,
     selectedOrgId,
     userIsPlatformOwner: !!user?.is_platform_owner,
+    memberChatOnly: isMemberOnlyUser,
     api,
     ctxWorkspaceId,
     ctxWorkspaceName,
     setActiveWorkspaceContext,
   });
 
+  // Sync URL → panel only when the query string changes (back/forward, deep link).
+  // Do not depend on `panel`: after Launch Chat, `panel` becomes `chats` before
+  // the next effect updates `?panel=`, and reading stale params would revert the panel.
   useEffect(() => {
     const qPanel = panelFromQuery(searchParams.get("panel"));
-    if (!qPanel || qPanel === panel) return;
-    setPanel(qPanel);
-  }, [searchParams, panel, setPanel]);
+    if (!qPanel) return;
+    setPanel((current) => (qPanel === current ? current : qPanel));
+  }, [searchParams, setPanel]);
 
+  // Always persist `panel` in the query string (including platform / dashboard / orgs).
+  // Omitting it made `current === panel` false whenever the URL had no `panel` but state
+  // was orgs|dashboard|platform, so this effect kept calling setSearchParams and broke nav.
   useEffect(() => {
     const current = panelFromQuery(searchParams.get("panel"));
     if (current === panel) return;
     const next = new URLSearchParams(searchParams);
-    if (panel === "platform" || panel === "dashboard" || panel === "orgs") {
-      next.delete("panel");
-    } else {
-      next.set("panel", panel);
-    }
+    next.set("panel", panel);
     setSearchParams(next, { replace: true });
   }, [panel, searchParams, setSearchParams]);
 
@@ -2405,9 +2526,29 @@ function HomePageContent({
   const canViewAudit = hasOrgOwnerAccess || hasWorkspaceAdminAccess;
   const canViewSettings = hasOrgOwnerAccess || hasWorkspaceAdminAccess;
 
+  // Member-only UX: auto-scope to first org and keep a chat-first landing.
+  useEffect(() => {
+    if (!isMemberOnlyUser) return;
+    if (selectedOrgId || orgs.length === 0) return;
+    enterOrganization(orgs[0].id);
+  }, [isMemberOnlyUser, selectedOrgId, orgs, enterOrganization]);
+
+  useEffect(() => {
+    if (!isMemberOnlyUser) return;
+    if (panel === "chats") return;
+    setPanel("chats");
+  }, [isMemberOnlyUser, panel, setPanel]);
+
+  useEffect(() => {
+    if (!isMemberOnlyUser) return;
+    if (chatWorkspaceId || scopedWorkspaces.length === 0) return;
+    setChatWorkspaceId(scopedWorkspaces[0].id);
+  }, [isMemberOnlyUser, chatWorkspaceId, scopedWorkspaces, setChatWorkspaceId]);
+
   const C = brightMode ? ORG_SHELL_TOKENS_BRIGHT : ORG_SHELL_TOKENS_DARK;
   const { navGroups, onSelectNavItem } = useHomeNavState({
     userIsPlatformOwner: !!user?.is_platform_owner,
+    memberChatOnly: isMemberOnlyUser,
     canViewBilling,
     canViewAudit,
     canViewSettings,
@@ -2444,6 +2585,7 @@ function HomePageContent({
     [navGroups, needsOrganizationContext, selectedOrgId, orgHasIndexedDocuments, isPlatformOwner],
   );
   const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name ?? null;
+  const [memberAccountSettingsOpen, setMemberAccountSettingsOpen] = useState(false);
 
   return (
     <div
@@ -2451,14 +2593,16 @@ function HomePageContent({
       style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: C.sans, overflow: "hidden" }}
     >
 
-      <HomeSidebar
-        navGroups={navGroupsWithState}
-        panel={panel}
-        onSelectNavItem={onSelectNavItem}
-        user={user}
-        initials={initials}
-        onLogout={() => void logout()}
-      />
+      {!isMemberOnlyUser && (
+        <HomeSidebar
+          navGroups={navGroupsWithState}
+          panel={panel}
+          onSelectNavItem={onSelectNavItem}
+          user={user}
+          initials={initials}
+          onLogout={() => void logout()}
+        />
+      )}
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2479,6 +2623,9 @@ function HomePageContent({
           ctxWorkspaceId={ctxWorkspaceId}
           exitToPlatform={exitToPlatform}
           setPanel={setPanel}
+          memberChatOnly={isMemberOnlyUser}
+          onLogout={() => void logout()}
+          onOpenAccountSettings={() => setMemberAccountSettingsOpen(true)}
         />
 
         {/* Scrollable content — chat embed fills column (no outer scroll) */}
@@ -2550,6 +2697,13 @@ function HomePageContent({
             UploadModal={UploadModal}
             setOrgs={setOrgs}
             setErr={setErr}
+            memberChatOnly={isMemberOnlyUser}
+            memberAccountSettingsOpen={memberAccountSettingsOpen}
+            setMemberAccountSettingsOpen={setMemberAccountSettingsOpen}
+            onLaunchWorkspaceChat={(id) => {
+              setChatWorkspaceId(id);
+              setPanel("chats");
+            }}
           />
         </div>
       </div>

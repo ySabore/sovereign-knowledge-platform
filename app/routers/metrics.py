@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import require_metrics_viewer
+from app.limiter import limiter
 from app.models import User
 from app.services.metrics import build_metrics_summary
 from app.services.rate_limits import enforce_privileged_read_api_limit
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 
 @router.get("/summary")
+@limiter.exempt
 def metrics_summary(
     request: Request,
     viewer: tuple[User, UUID | None] = Depends(require_metrics_viewer),

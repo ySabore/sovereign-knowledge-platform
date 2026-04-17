@@ -241,6 +241,8 @@ def list_audit_events_for_org(
                 "id": str(ev.id),
                 "created_at": ev.created_at.isoformat() if ev.created_at else None,
                 "actor_email": actor_email or "system",
+                "actor_role": ev.actor_role,
+                "organization_id": str(ev.organization_id) if ev.organization_id else None,
                 "action": ev.action,
                 "target_type": ev.target_type,
                 "target_id": str(ev.target_id) if ev.target_id else None,

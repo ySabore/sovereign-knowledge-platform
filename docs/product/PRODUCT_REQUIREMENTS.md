@@ -118,11 +118,19 @@ When evidence is insufficient, the system must return exactly:
 - Embed user questions; retrieve top-k with **org_id** and **workspace_id** filters on every search.
 - Answers grounded in retrieved context; citations returned.
 - Insufficient evidence → exact fallback string above.
+- Workspace operational questions should be answered from trusted metadata when possible
+  (for example document counts, indexing state counts, recent uploads, and source breakdown).
+- Chat should support direct in-context file upload for workspace members so new files can be
+  indexed and queried without leaving the chat experience.
 
 ### Chat history
 
 - Sessions associated with org, workspace, and user.
 - Persisted; Redis may be used for hot state per implementation plan.
+- Session titles should be derived from user context (first substantive prompt, with optional
+  second-turn refinement when first prompt is generic).
+- Users should be able to provide per-answer feedback (thumbs up/down) and have it persisted.
+- Users should be able to export conversation content to PDF from chat.
 
 ### Audit and logging
 

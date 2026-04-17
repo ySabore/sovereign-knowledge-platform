@@ -39,7 +39,17 @@ export function buildNavGroups(
   canViewAudit: boolean,
   canViewSettings: boolean,
   dashNavIcon: ReactNode,
+  memberChatOnly: boolean,
 ): NavGroup[] {
+  if (memberChatOnly) {
+    return [
+      {
+        label: "Chat",
+        items: [{ id: "chats", icon: "\u{1F4AC}", label: "Chats" }],
+      },
+    ];
+  }
+
   const enterpriseItems: NavItem[] = [];
   if (canViewBilling) enterpriseItems.push({ id: "billing", icon: "\u{1F4B3}", label: "Billing" });
   if (canViewAudit) enterpriseItems.push({ id: "audit", icon: "\u{1F6E1}", label: "Audit Log" });
@@ -73,10 +83,10 @@ export function buildNavGroups(
         {
           label: "Knowledge",
           items: [
-            { id: "team", icon: "\u{1F465}", label: "Team", badge: 12 },
-            { id: "analytics", icon: "\u{1F4CA}", label: "Analytics" },
             { id: "docs", icon: "\u{1F4C4}", label: "Documents" },
             { id: "connectors", icon: "\u{1F50C}", label: "Connectors", badge: 1, badgeVariant: "danger" },
+            { id: "analytics", icon: "\u{1F4CA}", label: "Analytics" },
+            { id: "team", icon: "\u{1F465}", label: "Team", badge: 12 },
           ],
         },
         ...enterpriseGroup,
@@ -94,10 +104,10 @@ export function buildNavGroups(
         {
           label: "Knowledge",
           items: [
-            { id: "team", icon: "\u{1F465}", label: "Team", badge: 12 },
-            { id: "analytics", icon: "\u{1F4CA}", label: "Analytics" },
             { id: "docs", icon: "\u{1F4C4}", label: "Documents" },
             { id: "connectors", icon: "\u{1F50C}", label: "Connectors", badge: 1, badgeVariant: "danger" },
+            { id: "analytics", icon: "\u{1F4CA}", label: "Analytics" },
+            { id: "team", icon: "\u{1F465}", label: "Team", badge: 12 },
           ],
         },
         ...enterpriseGroup,
@@ -134,6 +144,7 @@ export function getNavLockState(
 
 type UseHomeNavStateArgs = {
   userIsPlatformOwner: boolean;
+  memberChatOnly: boolean;
   canViewBilling: boolean;
   canViewAudit: boolean;
   canViewSettings: boolean;
@@ -151,6 +162,7 @@ type UseHomeNavStateArgs = {
 
 export function useHomeNavState({
   userIsPlatformOwner,
+  memberChatOnly,
   canViewBilling,
   canViewAudit,
   canViewSettings,
@@ -166,8 +178,8 @@ export function useHomeNavState({
   navigate,
 }: UseHomeNavStateArgs) {
   const navGroups = useMemo(
-    () => buildNavGroups(userIsPlatformOwner, canViewBilling, canViewAudit, canViewSettings, dashNavIcon),
-    [userIsPlatformOwner, canViewBilling, canViewAudit, canViewSettings, dashNavIcon],
+    () => buildNavGroups(userIsPlatformOwner, canViewBilling, canViewAudit, canViewSettings, dashNavIcon, memberChatOnly),
+    [userIsPlatformOwner, canViewBilling, canViewAudit, canViewSettings, dashNavIcon, memberChatOnly],
   );
 
   const onSelectNavItem = (item: NavItem) => {

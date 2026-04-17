@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { apiErrorMessage } from "../api/client";
 import { SessionErrorBanner } from "../components/SessionErrorBanner";
 import { useAuth } from "../context/AuthContext";
@@ -7,13 +7,15 @@ import { clerkEnabled } from "../lib/clerkEnv";
 
 export function LoginPage() {
   const { user, login, loading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get("redirect") || "/home";
   const [email, setEmail] = useState("owner@example.com");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   if (!loading && user) {
-    return <Navigate to="/home" replace />;
+    return <Navigate to={redirectTo} replace />;
   }
 
   async function onSubmit(e: FormEvent) {
@@ -75,11 +77,15 @@ export function LoginPage() {
             <p className="sk-muted" style={{ fontSize: "0.85rem", marginBottom: "0.75rem" }}>
               Or continue with Clerk (configure backend <span className="sk-mono">CLERK_*</span> to accept session tokens).
             </p>
-            <Link className="sk-btn secondary" to="/sign-in" style={{ display: "inline-block", width: "100%", textAlign: "center" }}>
+            <Link
+              className="sk-btn secondary"
+              to={`/sign-in${redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`}
+              style={{ display: "inline-block", width: "100%", textAlign: "center" }}
+            >
               Sign in with Clerk
             </Link>
             <p className="sk-muted" style={{ fontSize: "0.8rem", marginTop: "0.75rem" }}>
-              New user? <Link to="/sign-up">Create a Clerk account</Link>
+              New user? <Link to={`/sign-up${redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`}>Create a Clerk account</Link>
             </p>
           </div>
         )}

@@ -1,5 +1,6 @@
 import secrets
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
 from app.deps import get_current_user, require_platform_owner
+from app.limiter import limiter
 from app.models import (
     AuditAction,
     AuditLog,
@@ -25,9 +27,11 @@ from app.models import (
     WorkspaceMember,
     WorkspaceMemberRole,
 )
+from app.services.audit_actor import infer_actor_role
 from app.services.billing import ensure_seat_available
 from app.services.metrics import list_audit_events_for_org, list_documents_for_org
 from app.services.field_encryption import encrypt_org_secret
+from app.services.invite_email import send_organization_invite_email
 from app.services.resource_cleanup import delete_organization_cascade, delete_workspace_cascade
 from app.services.rate_limits import enforce_privileged_read_api_limit
 from app.services.workspace_access import resolve_workspace_for_user
@@ -55,6 +59,7 @@ router_w = APIRouter(prefix="/workspaces", tags=["workspaces"])
 DEFAULT_WORKSPACE_NAME = "General"
 DEFAULT_WORKSPACE_DESCRIPTION = "Default workspace created with the organization."
 INVITE_TTL_DAYS = 7
+logger = logging.getLogger(__name__)
 
 
 def _get_org_membership(db: Session, org_id: UUID, user_id: UUID) -> OrganizationMembership | None:
@@ -246,10 +251,19 @@ def _write_audit_log(
     organization_id: UUID | None = None,
     workspace_id: UUID | None = None,
     metadata: dict | None = None,
+    actor_role: str | None = None,
 ) -> None:
+    resolved_role = actor_role
+    if resolved_role is None and actor_user_id is not None:
+        actor = db.get(User, actor_user_id)
+        if actor is not None:
+            resolved_role = infer_actor_role(
+                db, actor, organization_id=organization_id, workspace_id=workspace_id
+            )
     db.add(
         AuditLog(
             actor_user_id=actor_user_id,
+            actor_role=resolved_role,
             organization_id=organization_id,
             workspace_id=workspace_id,
             action=action,
@@ -410,6 +424,9 @@ def create_organization_invite(
     user: User = Depends(get_current_user),
 ) -> OrganizationInviteIssueResponse:
     _require_org_owner(db, org_id, user)
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
     normalized_role = body.role.strip().lower()
     allowed_roles = {role.value for role in OrgMembershipRole}
     if normalized_role not in allowed_roles:
@@ -456,6 +473,15 @@ def create_organization_invite(
         invite.accepted_by_user_id = None
 
     db.flush()
+    invite_email_sent = send_organization_invite_email(
+        to_email=normalized_email,
+        organization_name=org.name,
+        role=normalized_role,
+        inviter_email=user.email,
+        token=token,
+    )
+    if not invite_email_sent and settings.invite_email_enabled:
+        logger.warning("organization invite email not sent for org_id=%s email=%s", org_id, normalized_email)
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -463,7 +489,12 @@ def create_organization_invite(
         target_type="organization_invite",
         target_id=invite.id,
         organization_id=org_id,
-        metadata={"email": normalized_email, "role": normalized_role, "expires_at": invite.expires_at.isoformat()},
+        metadata={
+            "email": normalized_email,
+            "role": normalized_role,
+            "expires_at": invite.expires_at.isoformat(),
+            "invite_email_sent": invite_email_sent,
+        },
     )
     db.commit()
     db.refresh(invite)
@@ -478,6 +509,9 @@ def resend_organization_invite(
     user: User = Depends(get_current_user),
 ) -> OrganizationInviteIssueResponse:
     _require_org_owner(db, org_id, user)
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
     invite = (
         db.query(OrganizationInvite)
         .filter(OrganizationInvite.id == invite_id, OrganizationInvite.organization_id == org_id)
@@ -493,6 +527,15 @@ def resend_organization_invite(
     invite.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
     invite.invited_by_user_id = user.id
     db.flush()
+    invite_email_sent = send_organization_invite_email(
+        to_email=invite.email,
+        organization_name=org.name,
+        role=invite.role,
+        inviter_email=user.email,
+        token=token,
+    )
+    if not invite_email_sent and settings.invite_email_enabled:
+        logger.warning("organization invite resend email not sent for org_id=%s email=%s", org_id, invite.email)
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -500,7 +543,7 @@ def resend_organization_invite(
         target_type="organization_invite",
         target_id=invite.id,
         organization_id=org_id,
-        metadata={"email": invite.email, "role": invite.role},
+        metadata={"email": invite.email, "role": invite.role, "invite_email_sent": invite_email_sent},
     )
     db.commit()
     db.refresh(invite)
@@ -652,6 +695,7 @@ def list_organization_documents(
 
 
 @router.get("/{org_id}/audit")
+@limiter.exempt
 def list_organization_audit(
     org_id: UUID,
     request: Request,

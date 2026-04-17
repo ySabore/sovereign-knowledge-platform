@@ -12,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import settings
 from app.logging_config import configure_logging
 from app.limiter import limiter
-from app.middleware import RequestIdMiddleware, SecurityHeadersMiddleware
+from app.middleware import AuditMutationMiddleware, RequestIdMiddleware, SecurityHeadersMiddleware
 from app.routers import api_chat, auth, billing, chat, connectors, documents, health, metrics, organizations, runtime_config, webhooks_clerk, webhooks_stripe
 
 configure_logging()
@@ -54,6 +54,8 @@ def create_app() -> FastAPI:
 
     # SlowAPI middleware is required for limiter.exempt and global default_limits.
     application.add_middleware(SlowAPIMiddleware)
+    # Innermost: observe final response + request.state (e.g. request_id) for HTTP mutation audit.
+    application.add_middleware(AuditMutationMiddleware)
 
     application.include_router(runtime_config.router)
     application.include_router(health.router)

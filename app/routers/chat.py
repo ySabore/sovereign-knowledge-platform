@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
@@ -15,6 +16,11 @@ from app.models import (
     ChatMessage,
     ChatMessageRole,
     ChatSession,
+    Document,
+    DocumentChunk,
+    DocumentStatus,
+    IngestionJob,
+    IngestionJobStatus,
     Organization,
     OrganizationMembership,
     OrgMembershipRole,
@@ -28,11 +34,14 @@ from app.routers.organizations import _write_audit_log
 from app.schemas.auth import (
     ChatCitationPublic,
     ChatMessageCreateRequest,
+    ChatMessageFeedbackRequest,
     ChatMessagePublic,
     ChatSessionCreateRequest,
     ChatSessionDetailResponse,
     ChatSessionPublic,
     ChatTurnResponse,
+    DocumentChunkPublic,
+    DocumentIngestionResponse,
 )
 from app.services.chat import (
     AnswerGenerationError,
@@ -43,12 +52,29 @@ from app.services.chat import (
 from app.services.chitchat import CHITCHAT_REPLY, is_low_intent_chitchat
 from app.services.chat_history import load_recent_conversation_turns
 from app.services.chat_sse import sse_chat_turn_lines
-from app.services.embeddings import EmbeddingServiceError
+from app.services.chat_titles import derive_chat_session_title, should_replace_chat_title
+from app.services.chat_workspace_facts import answer_workspace_fact_query
+from app.services.embeddings import EmbeddingServiceError, get_embedding_client
+from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
+from app.services.permissions import ensure_upload_permission_row
 from app.services.rag import resolve_top_k, run_retrieval_pipeline
 from app.services.rate_limits import enforce_org_query_limits
 from app.services.workspace_access import resolve_workspace_for_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+def _source_type_for_upload_filename(filename: str) -> str:
+    name = filename.lower()
+    return "pdf-upload" if name.endswith(".pdf") else "file-upload"
+
+
+def _content_type_for_upload(filename: str, reported: str | None) -> str:
+    if reported and reported.strip():
+        return reported.strip()
+    if filename.lower().endswith(".pdf"):
+        return "application/pdf"
+    return "application/octet-stream"
+
+
 
 
 def _is_org_owner(db: Session, organization_id: UUID, user_id: UUID) -> bool:
@@ -114,9 +140,68 @@ def _serialize_session(session: ChatSession) -> ChatSessionPublic:
     )
 
 
+def _parse_chat_citation(raw: object) -> ChatCitationPublic | None:
+    """Map stored citation JSON to the public schema.
+
+    Full RAG turns use :meth:`Citation.to_dict`. Older seed/demo rows and legacy
+    clients may only persist ``document_id`` + ``filename``.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return ChatCitationPublic.model_validate(raw)
+    except ValidationError:
+        pass
+    doc_id_val = raw.get("document_id")
+    if doc_id_val is None:
+        return None
+    try:
+        document_id = UUID(str(doc_id_val))
+    except ValueError:
+        return None
+    filename = raw.get("document_filename") or raw.get("filename") or "unknown"
+    chunk_id_val = raw.get("chunk_id")
+    if chunk_id_val is not None:
+        try:
+            chunk_id = UUID(str(chunk_id_val))
+        except ValueError:
+            chunk_id = uuid5(NAMESPACE_URL, f"skp:legacy-chat-citation:{document_id}:{filename}")
+    else:
+        chunk_id = uuid5(NAMESPACE_URL, f"skp:legacy-chat-citation:{document_id}:{filename}")
+    chunk_raw = raw.get("chunk_index")
+    try:
+        chunk_index = int(chunk_raw) if chunk_raw is not None else 0
+    except (TypeError, ValueError):
+        chunk_index = 0
+    page_raw = raw.get("page_number")
+    try:
+        page_number = int(page_raw) if page_raw is not None else None
+    except (TypeError, ValueError):
+        page_number = None
+    score_raw = raw.get("score")
+    try:
+        score = float(score_raw) if score_raw is not None else 0.0
+    except (TypeError, ValueError):
+        score = 0.0
+    quote = str(raw.get("quote") or "")
+    return ChatCitationPublic(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        document_filename=filename,
+        chunk_index=chunk_index,
+        page_number=page_number,
+        score=score,
+        quote=quote,
+    )
+
+
 def _serialize_message(message: ChatMessage) -> ChatMessagePublic:
     raw_citations = message.citations_json or []
-    citations = [ChatCitationPublic.model_validate(citation) for citation in raw_citations]
+    citations: list[ChatCitationPublic] = []
+    for item in raw_citations:
+        parsed = _parse_chat_citation(item)
+        if parsed is not None:
+            citations.append(parsed)
     return ChatMessagePublic(
         id=message.id,
         session_id=message.session_id,
@@ -124,6 +209,7 @@ def _serialize_message(message: ChatMessage) -> ChatMessagePublic:
         role=message.role,
         content=message.content,
         citations=citations,
+        feedback=message.feedback if message.feedback in {"up", "down"} else None,
         created_at=message.created_at,
     )
 
@@ -143,11 +229,14 @@ def create_chat_session(
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
 
+    normalized_title = body.title.strip() if body.title else None
+    if normalized_title and normalized_title.lower() in {"conversation", "new conversation", "chat"}:
+        normalized_title = None
     session = ChatSession(
         organization_id=workspace.organization_id,
         workspace_id=workspace.id,
         user_id=user.id,
-        title=body.title.strip() if body.title else None,
+        title=normalized_title,
     )
     db.add(session)
     db.commit()
@@ -239,6 +328,129 @@ def get_chat_session(
     )
 
 
+@router.post("/workspaces/{workspace_id}/upload", response_model=DocumentIngestionResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document_from_chat(
+    workspace_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DocumentIngestionResponse:
+    workspace = resolve_workspace_for_user(db, workspace_id, user)
+    if workspace is None:
+        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+
+    stored = await persist_upload_file(file, settings.document_storage_root, workspace_id)
+    upload_name = (file.filename or "document").strip() or "document"
+    pages = extract_pages_from_upload(stored.storage_path, upload_name)
+    if not pages:
+        raise HTTPException(
+            status_code=422,
+            detail="No extractable text found in this file. Check that the document is not empty or image-only.",
+        )
+
+    chunks = build_chunks(pages)
+    if not chunks:
+        raise HTTPException(status_code=422, detail="No chunks could be created from extracted text")
+
+    try:
+        embeddings = get_embedding_client().embed_texts_batched([chunk.content for chunk in chunks])
+    except EmbeddingServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Embedding service unavailable: {exc}",
+        ) from exc
+
+    ingestion_job = IngestionJob(
+        organization_id=workspace.organization_id,
+        workspace_id=workspace.id,
+        created_by=user.id,
+        status=IngestionJobStatus.completed.value,
+        source_filename=upload_name,
+    )
+    db.add(ingestion_job)
+    db.flush()
+
+    src_label = _source_type_for_upload_filename(upload_name)
+    document = Document(
+        organization_id=workspace.organization_id,
+        workspace_id=workspace.id,
+        ingestion_job_id=ingestion_job.id,
+        created_by=user.id,
+        filename=upload_name,
+        content_type=_content_type_for_upload(upload_name, file.content_type),
+        storage_path=stored.storage_path,
+        checksum_sha256=stored.checksum_sha256,
+        source_type=src_label,
+        status=DocumentStatus.indexed.value,
+        page_count=len(pages),
+        last_indexed_at=utcnow(),
+    )
+    db.add(document)
+    db.flush()
+    document.external_id = str(document.id)
+
+    for chunk, embedding in zip(chunks, embeddings, strict=True):
+        db.add(
+            DocumentChunk(
+                document_id=document.id,
+                chunk_index=chunk.chunk_index,
+                page_number=chunk.page_number,
+                section_title=chunk.section_title,
+                content=chunk.content,
+                token_count=chunk.char_count,
+                embedding_model=settings.embedding_model,
+                embedding=embedding,
+            )
+        )
+
+    ensure_upload_permission_row(db, document=document)
+    db.commit()
+
+    preview_limit = 6
+    return DocumentIngestionResponse(
+        ingestion_job_id=ingestion_job.id,
+        document_id=document.id,
+        organization_id=document.organization_id,
+        workspace_id=document.workspace_id,
+        filename=document.filename,
+        status=document.status,
+        page_count=document.page_count or 0,
+        chunk_count=len(chunks),
+        checksum_sha256=stored.checksum_sha256,
+        storage_path=stored.storage_path,
+        chunks=[
+            DocumentChunkPublic(
+                chunk_index=chunk.chunk_index,
+                page_number=chunk.page_number,
+                char_count=chunk.char_count,
+                content_preview=(chunk.content[:160] + "...") if len(chunk.content) > 160 else chunk.content,
+            )
+            for chunk in chunks[:preview_limit]
+        ],
+    )
+
+
+@router.put("/messages/{message_id}/feedback", response_model=ChatMessagePublic)
+def set_chat_message_feedback(
+    message_id: UUID,
+    body: ChatMessageFeedbackRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ChatMessagePublic:
+    message = db.get(ChatMessage, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Chat message not found")
+    _require_session_for_user(db, message.session_id, user)
+    if message.role != ChatMessageRole.assistant.value:
+        raise HTTPException(status_code=400, detail="Feedback is only supported for assistant messages")
+    if body.feedback not in {"up", "down", None}:
+        raise HTTPException(status_code=400, detail="Invalid feedback value")
+    message.feedback = body.feedback
+    db.commit()
+    db.refresh(message)
+    return _serialize_message(message)
+
+
 @router.post("/sessions/{session_id}/messages", response_model=ChatTurnResponse, status_code=status.HTTP_201_CREATED)
 def create_chat_message(
     request: Request,
@@ -264,9 +476,20 @@ def create_chat_message(
     )
     db.add(user_message)
     db.flush()
+    user_turn_count = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session.id,
+            ChatMessage.role == ChatMessageRole.user.value,
+        )
+        .count()
+    )
 
     try:
-        if is_low_intent_chitchat(query):
+        fact_answer = answer_workspace_fact_query(db, session, user.id, query)
+        if fact_answer is not None:
+            answer_text, citations, generation_mode = fact_answer
+        elif is_low_intent_chitchat(query):
             answer_text, citations, generation_mode = CHITCHAT_REPLY, [], "chitchat"
         else:
             hits = run_retrieval_pipeline(
@@ -306,8 +529,8 @@ def create_chat_message(
     )
     db.add(assistant_message)
 
-    if not session.title:
-        session.title = query[:120]
+    if should_replace_chat_title(session.title, query, user_turn_count=user_turn_count):
+        session.title = derive_chat_session_title(query)
     session.updated_at = utcnow()
 
     db.commit()

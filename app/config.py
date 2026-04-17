@@ -81,6 +81,29 @@ class Settings(BaseSettings):
         description="Use Redis (Upstash-compatible rediss://) for org plan tier limits on query/sync/admin routes",
     )
 
+    audit_http_middleware_enabled: bool = Field(
+        default=True,
+        description="Record successful POST/PUT/PATCH/DELETE API calls in audit_logs when org scope is inferred from the URL",
+    )
+
+    # --- Invite emails (optional SMTP sender) ---
+    invite_email_enabled: bool = Field(
+        default=False,
+        description="If true, organization invite/resend attempts send outbound email via SMTP settings below",
+    )
+    invite_accept_url_base: str = Field(
+        default="http://localhost:8080/accept-invite",
+        description="Frontend URL used in invite emails. Token is appended as ?token=... unless {token} placeholder is present.",
+    )
+    smtp_host: str = Field(default="", description="SMTP host for transactional email (e.g. smtp.sendgrid.net)")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="", description="SMTP username (optional when relay allows unauthenticated send)")
+    smtp_password: str = Field(default="", description="SMTP password / API key")
+    smtp_use_starttls: bool = Field(default=True, description="Use STARTTLS after SMTP connect")
+    smtp_use_ssl: bool = Field(default=False, description="Use implicit TLS (SMTPS) on connect")
+    smtp_from_email: str = Field(default="", description="From email address for invite messages")
+    smtp_from_name: str = Field(default="Sovereign Knowledge", description="From display name for invite messages")
+
     # --- Stripe billing (optional) ---
     stripe_secret_key: str = Field(default="", description="sk_live_… or sk_test_…")
     stripe_webhook_secret: str = Field(default="", description="whsec_… for /webhooks/stripe")

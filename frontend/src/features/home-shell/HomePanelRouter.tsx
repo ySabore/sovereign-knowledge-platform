@@ -72,6 +72,10 @@ export function HomePanelRouter(props: HomePanelRouterProps) {
     UploadModal,
     setOrgs,
     setErr,
+    memberChatOnly,
+    memberAccountSettingsOpen,
+    setMemberAccountSettingsOpen,
+    onLaunchWorkspaceChat,
   } = props;
   return (
     <>
@@ -140,6 +144,7 @@ export function HomePanelRouter(props: HomePanelRouterProps) {
           loadOrgs={loadOrgs}
           api={api}
           OrgDetailView={OrgDetailView}
+          onLaunchWorkspaceChat={onLaunchWorkspaceChat}
         />
       )}
 
@@ -176,6 +181,9 @@ export function HomePanelRouter(props: HomePanelRouterProps) {
             key={chatWorkspaceId}
             embedded
             embeddedBright={brightMode}
+            chatOnlyMode={memberChatOnly}
+            accountSettingsOpen={memberChatOnly ? memberAccountSettingsOpen : undefined}
+            onCloseAccountSettings={() => setMemberAccountSettingsOpen(false)}
             workspaceId={chatWorkspaceId}
             onEmbeddedWorkspaceChange={onEmbeddedChatWorkspaceChange}
           />
@@ -198,6 +206,14 @@ export function HomePanelRouter(props: HomePanelRouterProps) {
           initialOrgId={(workspaceInContext?.organization_id || selectedOrgId) || undefined}
           scopedWorkspaceId={workspaceInContext?.id ?? null}
           scopedWorkspaceName={workspaceInContext?.name ?? null}
+          viewer={
+            user
+              ? {
+                  is_platform_owner: Boolean(user.is_platform_owner),
+                  org_ids_as_owner: user.org_ids_as_owner ?? [],
+                }
+              : null
+          }
         />
       )}
 
@@ -222,6 +238,7 @@ export function HomePanelRouter(props: HomePanelRouterProps) {
           orgs={orgs}
           selectedOrgId={selectedOrgId}
           workspaceScopeIds={workspaceScopeIds}
+          workspaces={scopedWorkspaces}
         />
       )}
 

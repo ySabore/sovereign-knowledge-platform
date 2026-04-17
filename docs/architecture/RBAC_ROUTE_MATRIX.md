@@ -56,10 +56,12 @@ Source of truth:
 | `POST /connectors/sync-permissions` | connector manage access | `PO`, `OO`, `WA` |
 | `DELETE /connectors/{connector_id}` | connector manage access | `PO`, `OO`, `WA` |
 | `POST /chat/workspaces/{workspace_id}/sessions` | workspace access | `PO`, `OO`, assigned `WA/ED/MB` |
+| `POST /chat/workspaces/{workspace_id}/upload` | workspace access + in-chat indexing | `PO`, `OO`, assigned `WA/ED/MB` |
 | `GET /chat/workspaces/{workspace_id}/sessions` | workspace access + role-based list policy | `PO`, `OO`, `WA` (all sessions), `ED/MB` (own only) |
 | `GET /chat/sessions/{session_id}` | session access via org owner/workspace membership | `PO`, `OO`, assigned `WA/ED/MB` |
 | `POST /chat/sessions/{session_id}/messages` | session access | `PO`, `OO`, assigned `WA/ED/MB` |
 | `POST /chat/sessions/{session_id}/messages/stream` | session access | `PO`, `OO`, assigned `WA/ED/MB` |
+| `PUT /chat/messages/{message_id}/feedback` | session access + assistant-only feedback target | `PO`, `OO`, assigned `WA/ED/MB` |
 | `POST /chat` | same as stream session route | `PO`, `OO`, assigned `WA/ED/MB` |
 | `DELETE /chat/sessions/{session_id}` | own session or workspace admin/org owner/platform owner | `PO`, `OO`, `WA` (or owner of session) |
 | `GET /organizations/{org_id}/billing/plan` | `_require_org_owner` | `PO`, `OO` |
@@ -80,6 +82,7 @@ Source of truth:
 - `/admin/*` route surfaces have been removed from the active shell; role-aware navigation now lives in `/home` panels only.
 - Main-shell Audit panel enhancements include workspace filter, failures-only toggle, severity tagging, expandable metadata, and filtered CSV export.
 - Audit and Settings headers now show a `Workspace-scoped access` badge when a workspace admin is operating in scoped mode.
+- Member chat supports in-composer `Upload file`, persisted answer feedback, PDF export, and metadata-backed workspace operational Q&A (counts/status/source mix/recent files).
 
 ### Partial / known gaps
 

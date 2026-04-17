@@ -105,10 +105,11 @@ Can do:
 - Give answer feedback (thumbs up/down).
 - Export own answers.
 - Share conversation links within permitted workspace scope.
+- Upload files from chat for immediate indexing/query in assigned workspace(s).
 
 Cannot do:
 
-- Upload/delete documents.
+- Delete documents.
 - Manage users, connectors, analytics, or audit settings.
 - Access org/platform controls.
 - View data outside assigned workspace scope.
@@ -220,6 +221,9 @@ Implemented in backend:
 - Chat session visibility:
   - `org_owner` and `workspace_admin` can list all sessions in a workspace.
   - `editor` and `member` see only their own sessions.
+- Chat upload + feedback:
+  - `POST /chat/workspaces/{workspace_id}/upload` allows workspace members to upload/index from chat.
+  - `PUT /chat/messages/{message_id}/feedback` persists thumbs up/down on assistant answers.
 - Audit visibility:
   - `platform_owner` and `org_owner` can view full org audit stream.
   - `workspace_admin` can view only audit events for workspaces they manage.

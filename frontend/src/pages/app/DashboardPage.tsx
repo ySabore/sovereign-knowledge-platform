@@ -18,10 +18,41 @@ type ChatMessage = {
   role: string;
   content: string;
   citations: Citation[];
+  feedback?: "up" | "down" | null;
+};
+
+type ChatUploadResponse = {
+  document_id: string;
+  filename: string;
+  chunk_count: number;
+};
+
+type NotificationPrefs = {
+  emailDigest: boolean;
+  productUpdates: boolean;
+  answerReadyAlerts: boolean;
 };
 
 const GENERATION_MODE_STORAGE_KEY = "skp_generation_meta_by_message_v1";
+const CHAT_NOTIFICATION_PREFS_KEY = "skp_member_chat_notification_prefs_v1";
 type GenerationDebugMeta = { mode: string; model?: string | null; confidence?: string | null };
+
+function readNotificationPrefs(): NotificationPrefs {
+  try {
+    const raw = localStorage.getItem(CHAT_NOTIFICATION_PREFS_KEY);
+    if (!raw) {
+      return { emailDigest: true, productUpdates: false, answerReadyAlerts: true };
+    }
+    const parsed = JSON.parse(raw) as Partial<NotificationPrefs>;
+    return {
+      emailDigest: Boolean(parsed.emailDigest),
+      productUpdates: Boolean(parsed.productUpdates),
+      answerReadyAlerts: Boolean(parsed.answerReadyAlerts),
+    };
+  } catch {
+    return { emailDigest: true, productUpdates: false, answerReadyAlerts: true };
+  }
+}
 
 function readGenerationModeStore(): Record<string, GenerationDebugMeta> {
   try {
@@ -73,6 +104,7 @@ function generationModeLabel(mode: string) {
   if (mode === "extractive") return "Mode: extractive";
   if (mode === "no_evidence") return "Mode: no evidence";
   if (mode === "chitchat") return "Greeting (no document search)";
+  if (mode === "workspace_stats") return "Workspace metadata";
   return `Mode: ${mode.replaceAll("_", " ")}`;
 }
 
@@ -88,6 +120,12 @@ export type DashboardPageProps = {
   embedded?: boolean;
   /** Match platform bright mode when embedded under /home or /organizations. */
   embeddedBright?: boolean;
+  /** Member chat-first mode: hide conversation sidebar menu in embedded shell. */
+  chatOnlyMode?: boolean;
+  /** Controlled account settings modal open state (used by Home top-right avatar menu). */
+  accountSettingsOpen?: boolean;
+  /** Close callback for controlled account settings modal state. */
+  onCloseAccountSettings?: () => void;
   onEmbeddedWorkspaceChange?: (workspaceId: string) => void;
 };
 
@@ -95,6 +133,9 @@ export function DashboardPage({
   workspaceId: workspaceIdProp,
   embedded = false,
   embeddedBright = false,
+  chatOnlyMode = false,
+  accountSettingsOpen,
+  onCloseAccountSettings,
   onEmbeddedWorkspaceChange,
 }: DashboardPageProps = {}) {
   const { workspaceId: routeId } = useParams<{ workspaceId: string }>();
@@ -114,6 +155,12 @@ export function DashboardPage({
   const [err, setErr] = useState<string | null>(null);
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const [feedbackByMsg, setFeedbackByMsg] = useState<Record<string, "up" | "down" | undefined>>({});
+  const [feedbackBusyByMsg, setFeedbackBusyByMsg] = useState<Record<string, boolean>>({});
+  const [showAccountSettingsLocal, setShowAccountSettingsLocal] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>(() => readNotificationPrefs());
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
+  const chatUploadInputRef = useRef<HTMLInputElement | null>(null);
   /** Full-screen “Loading workspace” only on standalone `/dashboard`; embedded chat stays mounted so history + scroll aren’t torn down on every return. */
   const [loadingWs, setLoadingWs] = useState(() => !embedded);
 
@@ -130,6 +177,10 @@ export function DashboardPage({
   /** Parent may pass an inline callback — keep `loadWorkspaces` stable so it does not refetch on every parent render. */
   const onEmbeddedWorkspaceChangeRef = useRef(onEmbeddedWorkspaceChange);
   onEmbeddedWorkspaceChangeRef.current = onEmbeddedWorkspaceChange;
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_NOTIFICATION_PREFS_KEY, JSON.stringify(notificationPrefs));
+  }, [notificationPrefs]);
 
   const loadWorkspaces = useCallback(async () => {
     const blocking = wsFetchShouldBlockRef.current && !embedded;
@@ -206,6 +257,14 @@ export function DashboardPage({
     const { data } = await api.get<{ messages: ChatMessage[] }>(`/chat/sessions/${sid}`);
     if (activeSessionIdRef.current !== sid) return;
     setMessages(data.messages);
+    const feedbackFromHistory: Record<string, "up" | "down" | undefined> = {};
+    for (const msg of data.messages) {
+      if (msg.role !== "assistant") continue;
+      if (msg.feedback === "up" || msg.feedback === "down") {
+        feedbackFromHistory[msg.id] = msg.feedback;
+      }
+    }
+    setFeedbackByMsg(feedbackFromHistory);
     const persisted = readGenerationModeStore();
     const fromHistory: Record<string, string> = {};
     const modelFromHistory: Record<string, string> = {};
@@ -303,7 +362,7 @@ export function DashboardPage({
 
   const ensureSession = async (): Promise<string> => {
     if (activeSessionId) return activeSessionId;
-    const { data } = await api.post<ChatSession>(`/chat/workspaces/${workspaceId}/sessions`, { title: "Conversation" });
+    const { data } = await api.post<ChatSession>(`/chat/workspaces/${workspaceId}/sessions`, {});
     setActiveSessionId(data.id);
     await loadSessions(false);
     return data.id;
@@ -381,6 +440,98 @@ export function DashboardPage({
     }
   };
 
+  const setMessageFeedback = async (messageId: string, next: "up" | "down" | null) => {
+    if (feedbackBusyByMsg[messageId]) return;
+    setFeedbackBusyByMsg((prev) => ({ ...prev, [messageId]: true }));
+    const optimistic = next ?? undefined;
+    setFeedbackByMsg((prev) => ({ ...prev, [messageId]: optimistic }));
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, feedback: next } : m)));
+    try {
+      const { data } = await api.put<ChatMessage>(`/chat/messages/${messageId}/feedback`, { feedback: next });
+      const persisted = (data.feedback === "up" || data.feedback === "down") ? data.feedback : undefined;
+      setFeedbackByMsg((prev) => ({ ...prev, [messageId]: persisted }));
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, feedback: data.feedback ?? null } : m)));
+    } catch (e) {
+      setErr(apiErrorMessage(e));
+      await loadMessages().catch(() => {});
+    } finally {
+      setFeedbackBusyByMsg((prev) => ({ ...prev, [messageId]: false }));
+    }
+  };
+
+  const uploadFilesFromChat = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !workspaceId || uploadBusy) return;
+    setUploadBusy(true);
+    setUploadNote(null);
+    let success = 0;
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", file);
+        await api.post<ChatUploadResponse>(`/chat/workspaces/${workspaceId}/upload`, form);
+        success += 1;
+      }
+      setUploadNote(
+        success === 1
+          ? "1 file uploaded and indexed. You can ask questions about it now."
+          : `${success} files uploaded and indexed.`,
+      );
+    } catch (e) {
+      setErr(apiErrorMessage(e));
+      setUploadNote(null);
+    } finally {
+      setUploadBusy(false);
+      if (chatUploadInputRef.current) chatUploadInputRef.current.value = "";
+      await loadMessages().catch(() => {});
+    }
+  };
+
+  const exportConversationPdf = async () => {
+    if (!messages.length) return;
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 42;
+    const maxTextWidth = pageWidth - margin * 2;
+    let y = margin;
+    const activeSession = sessions.find((s) => s.id === activeSessionId);
+    const title = (activeSession?.title || "Conversation export").trim();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text(title, margin, y);
+    y += 20;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(90);
+    doc.text(`Workspace: ${workspaces.find((w) => w.id === workspaceId)?.name || "Current workspace"}`, margin, y);
+    y += 16;
+    doc.text(`Exported: ${new Date().toLocaleString()}`, margin, y);
+    y += 20;
+    doc.setTextColor(20);
+    for (const msg of messages) {
+      const label = msg.role === "assistant" ? "Assistant" : msg.role === "user" ? "You" : msg.role;
+      const header = `${label} • ${new Date().toLocaleString()}`;
+      const wrappedHeader = doc.splitTextToSize(header, maxTextWidth);
+      const wrappedBody = doc.splitTextToSize(msg.content || "", maxTextWidth);
+      const blockHeight = (wrappedHeader.length + wrappedBody.length + 2) * 14;
+      if (y + blockHeight > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(wrappedHeader, margin, y);
+      y += wrappedHeader.length * 14;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(wrappedBody, margin, y);
+      y += wrappedBody.length * 14 + 10;
+    }
+    const fileSafe = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "chat-export";
+    doc.save(`${fileSafe}.pdf`);
+  };
+
   const latestAssistantCitations =
     messages
       .slice()
@@ -394,15 +545,29 @@ export function DashboardPage({
 
   const historyGroups = useMemo(() => {
     const today: ChatSession[] = [];
-    const earlier: ChatSession[] = [];
+    const yesterday: ChatSession[] = [];
+    const lastWeek: ChatSession[] = [];
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
     sessions.forEach((s) => {
       const d = new Date(s.updated_at);
       const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-      if (sameDay) today.push(s);
-      else earlier.push(s);
+      const sameYesterday =
+        d.getFullYear() === startOfYesterday.getFullYear()
+        && d.getMonth() === startOfYesterday.getMonth()
+        && d.getDate() === startOfYesterday.getDate();
+      if (sameDay) {
+        today.push(s);
+      } else if (sameYesterday) {
+        yesterday.push(s);
+      } else {
+        // Keep all older conversations discoverable under one enterprise-style bucket.
+        lastWeek.push(s);
+      }
     });
-    return { today, earlier };
+    return { today, yesterday, lastWeek };
   }, [sessions]);
 
   const suggestedPrompts = useMemo(() => {
@@ -425,10 +590,19 @@ export function DashboardPage({
   }
 
   const showEmpty = messages.length === 0 && !streaming;
+  const showHistoryMenu = true;
+  const showAccountSettings = accountSettingsOpen ?? showAccountSettingsLocal;
+  const closeAccountSettings = () => {
+    if (onCloseAccountSettings) {
+      onCloseAccountSettings();
+      return;
+    }
+    setShowAccountSettingsLocal(false);
+  };
 
   return (
     <div
-      className={`skc-frame${embedded ? " skc-frame--embedded" : ""}${embedded && embeddedBright ? " skc-frame--bright" : ""}`}
+      className={`skc-frame${embedded ? " skc-frame--embedded" : ""}${embedded && embeddedBright ? " skc-frame--bright" : ""}${!showHistoryMenu ? " skc-frame--chat-only" : ""}`}
     >
       {!embedded && (
         <div className="skc-topbar">
@@ -455,74 +629,113 @@ export function DashboardPage({
         </div>
       )}
 
-      <aside className="skc-history">
-        <div className="skc-history-top">
-          <button
-            type="button"
-            className="skc-new-chat"
-            onClick={() => {
-              setActiveSessionId(null);
-              setMessages([]);
-            }}
-          >
-            + New conversation
-          </button>
-        </div>
-        <div className="skc-group-label">Today</div>
-        <div className="skc-history-list">
-          {historyGroups.today.map((s) => (
-            <div key={s.id} className={`skc-history-item-row ${activeSessionId === s.id ? "on" : ""}`}>
-              <button type="button" className="skc-history-item" onClick={() => setActiveSessionId(s.id)}>
-                <div className="skc-history-q">{s.title || "Untitled conversation"}</div>
-                <div className="skc-history-m">{fmtWhen(s.updated_at)}</div>
-              </button>
-              <button
-                type="button"
-                className="skc-history-del"
-                title="Delete conversation"
-                aria-label="Delete conversation"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void deleteChatSession(s.id);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {historyGroups.earlier.length > 0 && <div className="skc-group-label">Earlier</div>}
-          {historyGroups.earlier.map((s) => (
-            <div key={s.id} className={`skc-history-item-row ${activeSessionId === s.id ? "on" : ""}`}>
-              <button type="button" className="skc-history-item" onClick={() => setActiveSessionId(s.id)}>
-                <div className="skc-history-q">{s.title || "Untitled conversation"}</div>
-                <div className="skc-history-m">{new Date(s.updated_at).toLocaleDateString()}</div>
-              </button>
-              <button
-                type="button"
-                className="skc-history-del"
-                title="Delete conversation"
-                aria-label="Delete conversation"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void deleteChatSession(s.id);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-        {!embedded && (
-          <div className="skc-history-bottom">
-            <div className="sk-muted" style={{ fontSize: "0.75rem" }}>
-              {user?.email}
-            </div>
-            <button className="sk-btn secondary" onClick={() => void logout()}>
-              Sign out
+      {showHistoryMenu && (
+        <aside className="skc-history">
+          <div className="skc-history-top">
+            <div className="skc-group-label skc-group-label--top">Chat</div>
+            <button
+              type="button"
+              className="skc-new-chat"
+              onClick={() => {
+                setActiveSessionId(null);
+                setMessages([]);
+              }}
+            >
+              + New conversation
             </button>
           </div>
-        )}
-      </aside>
+          <div className="skc-group-label skc-group-label--section">History</div>
+          <div className="skc-group-label">Today</div>
+          <div className="skc-history-list">
+            {historyGroups.today.map((s) => (
+              <div key={s.id} className={`skc-history-item-row ${activeSessionId === s.id ? "on" : ""}`}>
+                <button type="button" className="skc-history-item" onClick={() => setActiveSessionId(s.id)}>
+                  <div className="skc-history-q">{s.title || "Untitled conversation"}</div>
+                  <div className="skc-history-m">{fmtWhen(s.updated_at)}</div>
+                </button>
+                <button
+                  type="button"
+                  className="skc-history-del"
+                  title="Delete conversation"
+                  aria-label="Delete conversation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void deleteChatSession(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {historyGroups.yesterday.length > 0 && <div className="skc-group-label">Yesterday</div>}
+            {historyGroups.yesterday.map((s) => (
+              <div key={s.id} className={`skc-history-item-row ${activeSessionId === s.id ? "on" : ""}`}>
+                <button type="button" className="skc-history-item" onClick={() => setActiveSessionId(s.id)}>
+                  <div className="skc-history-q">{s.title || "Untitled conversation"}</div>
+                  <div className="skc-history-m">{new Date(s.updated_at).toLocaleDateString()}</div>
+                </button>
+                <button
+                  type="button"
+                  className="skc-history-del"
+                  title="Delete conversation"
+                  aria-label="Delete conversation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void deleteChatSession(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {historyGroups.lastWeek.length > 0 && <div className="skc-group-label">Last week</div>}
+            {historyGroups.lastWeek.map((s) => (
+              <div key={s.id} className={`skc-history-item-row ${activeSessionId === s.id ? "on" : ""}`}>
+                <button type="button" className="skc-history-item" onClick={() => setActiveSessionId(s.id)}>
+                  <div className="skc-history-q">{s.title || "Untitled conversation"}</div>
+                  <div className="skc-history-m">{new Date(s.updated_at).toLocaleDateString()}</div>
+                </button>
+                <button
+                  type="button"
+                  className="skc-history-del"
+                  title="Delete conversation"
+                  aria-label="Delete conversation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void deleteChatSession(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          {!chatOnlyMode && (
+            <div className="skc-history-bottom">
+              <div className="skc-group-label skc-group-label--section">Account</div>
+              <div className="skc-account-card">
+                <div className="skc-account-avatar">{user?.email?.slice(0, 2).toUpperCase() || "U"}</div>
+                <div className="skc-account-meta">
+                  <div className="skc-account-name">Workspace user</div>
+                  <div className="skc-account-email">{user?.email || "signed in"}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="skc-account-settings-btn"
+                onClick={() => setShowAccountSettingsLocal(true)}
+              >
+                Profile & notifications
+              </button>
+              {!embedded && (
+                <button className="sk-btn secondary" onClick={() => void logout()}>
+                  Sign out
+                </button>
+              )}
+            </div>
+          )}
+        </aside>
+      )}
 
       <main className="skc-main">
         <div className="skc-messages" ref={messagesScrollRef}>
@@ -587,13 +800,15 @@ export function DashboardPage({
                       </button>
                       <button
                         className={`skc-icon-btn ${feedbackByMsg[m.id] === "up" ? "on" : ""}`}
-                        onClick={() => setFeedbackByMsg((f) => ({ ...f, [m.id]: "up" }))}
+                        disabled={Boolean(feedbackBusyByMsg[m.id])}
+                        onClick={() => void setMessageFeedback(m.id, feedbackByMsg[m.id] === "up" ? null : "up")}
                       >
                         👍
                       </button>
                       <button
                         className={`skc-icon-btn ${feedbackByMsg[m.id] === "down" ? "on" : ""}`}
-                        onClick={() => setFeedbackByMsg((f) => ({ ...f, [m.id]: "down" }))}
+                        disabled={Boolean(feedbackBusyByMsg[m.id])}
+                        onClick={() => void setMessageFeedback(m.id, feedbackByMsg[m.id] === "down" ? null : "down")}
                       >
                         👎
                       </button>
@@ -615,6 +830,16 @@ export function DashboardPage({
 
         <div className="skc-composer-wrap">
           <div className="skc-composer">
+            <input
+              ref={chatUploadInputRef}
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,.pptx,.xlsx,.xls,.csv,.rtf,.eml,.msg,.epub,.mobi,.png,.jpg,.jpeg,.webp,.tif,.tiff"
+              onChange={(e) => {
+                void uploadFilesFromChat(e.target.files);
+              }}
+            />
             <textarea
               className="skc-textarea"
               placeholder="Ask anything about your organization's knowledge…"
@@ -629,18 +854,101 @@ export function DashboardPage({
               }}
             />
             <div className="skc-composer-footer">
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <div className="skc-hint-chip">Current workspace</div>
                 <div className="skc-hint-chip">{sessions.length} chats</div>
+                <button
+                  type="button"
+                  className="skc-hint-chip skc-hint-chip--action"
+                  disabled={uploadBusy}
+                  onClick={() => chatUploadInputRef.current?.click()}
+                >
+                  {uploadBusy ? "Uploading..." : "Upload file"}
+                </button>
+                <button
+                  type="button"
+                  className="skc-hint-chip skc-hint-chip--action"
+                  onClick={() => void exportConversationPdf()}
+                  disabled={messages.length === 0}
+                >
+                  Export PDF
+                </button>
+                <button
+                  type="button"
+                  className="skc-hint-chip skc-hint-chip--action"
+                  onClick={() => {
+                    setActiveSessionId(null);
+                    setMessages([]);
+                  }}
+                >
+                  New conversation
+                </button>
               </div>
               <button className="skc-send-btn" disabled={streaming || !input.trim()} onClick={() => void send()}>
                 ➤
               </button>
             </div>
+            {uploadNote && (
+              <div style={{ marginTop: 8, fontSize: "0.7rem", color: "var(--ok, #10b981)" }}>
+                {uploadNote}
+              </div>
+            )}
           </div>
         </div>
       </main>
       <ChatSourcesPanel citations={latestAssistantCitations} selected={selectedCitation} onSelect={setSelectedCitation} />
+      {showAccountSettings && (
+        <div className="skc-modal-backdrop" role="presentation" onClick={closeAccountSettings}>
+          <div className="skc-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="skc-modal-header">
+              <div>
+                <div className="skc-modal-title">Profile & notifications</div>
+                <div className="skc-modal-subtitle">Member preferences for your chat workspace.</div>
+              </div>
+              <button type="button" className="skc-icon-btn" onClick={closeAccountSettings}>×</button>
+            </div>
+            <div className="skc-modal-section">
+              <div className="skc-modal-label">Profile</div>
+              <div className="skc-modal-value">
+                <div><strong>Name:</strong> {user?.full_name || "Not set"}</div>
+                <div><strong>Email:</strong> {user?.email || "Unknown"}</div>
+              </div>
+            </div>
+            <div className="skc-modal-section">
+              <div className="skc-modal-label">Notifications</div>
+              <label className="skc-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={notificationPrefs.answerReadyAlerts}
+                  onChange={(e) => setNotificationPrefs((p) => ({ ...p, answerReadyAlerts: e.target.checked }))}
+                />
+                Notify me when answer generation completes
+              </label>
+              <label className="skc-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={notificationPrefs.emailDigest}
+                  onChange={(e) => setNotificationPrefs((p) => ({ ...p, emailDigest: e.target.checked }))}
+                />
+                Weekly email digest
+              </label>
+              <label className="skc-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={notificationPrefs.productUpdates}
+                  onChange={(e) => setNotificationPrefs((p) => ({ ...p, productUpdates: e.target.checked }))}
+                />
+                Product updates and tips
+              </label>
+            </div>
+            <div className="skc-modal-footer">
+              <button type="button" className="sk-btn secondary" onClick={closeAccountSettings}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

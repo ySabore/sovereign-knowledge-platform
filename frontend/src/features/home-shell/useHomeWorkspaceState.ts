@@ -6,6 +6,7 @@ type UseHomeWorkspaceStateArgs = {
   orgs: Org[];
   selectedOrgId: string;
   userIsPlatformOwner: boolean;
+  memberChatOnly: boolean;
   api: ApiClient;
   ctxWorkspaceId: string | null | undefined;
   ctxWorkspaceName: string | null | undefined;
@@ -16,12 +17,13 @@ export function useHomeWorkspaceState({
   orgs,
   selectedOrgId,
   userIsPlatformOwner,
+  memberChatOnly,
   api,
   ctxWorkspaceId,
   ctxWorkspaceName,
   setActiveWorkspaceContext,
 }: UseHomeWorkspaceStateArgs) {
-  const [panel, setPanel] = useState<Panel>(userIsPlatformOwner ? "platform" : "dashboard");
+  const [panel, setPanel] = useState<Panel>(userIsPlatformOwner ? "platform" : memberChatOnly ? "chats" : "dashboard");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
   const [workspaceCountByOrg, setWorkspaceCountByOrg] = useState<Record<string, number>>({});
@@ -78,6 +80,28 @@ export function useHomeWorkspaceState({
       setWorkspaceCountByOrg({});
       return;
     }
+    if (memberChatOnly) {
+      let stale = false;
+      void api
+        .get<Workspace[]>("/workspaces/me")
+        .then(({ data }) => {
+          if (stale) return;
+          setAllWorkspaces(data);
+          const counts: Record<string, number> = {};
+          for (const o of orgs) counts[o.id] = 0;
+          for (const ws of data) counts[ws.organization_id] = (counts[ws.organization_id] ?? 0) + 1;
+          setWorkspaceCountByOrg(counts);
+        })
+        .catch(() => {
+          if (!stale) {
+            setAllWorkspaces([]);
+            setWorkspaceCountByOrg({});
+          }
+        });
+      return () => {
+        stale = true;
+      };
+    }
     let cancelled = false;
     void Promise.allSettled(
       orgs.map((o) =>
@@ -103,13 +127,38 @@ export function useHomeWorkspaceState({
     return () => {
       cancelled = true;
     };
-  }, [api, orgs, workspacesReloadNonce]);
+  }, [api, orgs, workspacesReloadNonce, memberChatOnly]);
 
   useEffect(() => {
     if (!selectedOrgId) {
       setWorkspaces([]);
       setLoadingWs(false);
       return;
+    }
+    if (memberChatOnly) {
+      let stale = false;
+      setLoadingWs(true);
+      api
+        .get<Workspace[]>("/workspaces/me")
+        .then(({ data }) => {
+          if (stale) return;
+          const scoped = data.filter((ws) => ws.organization_id === selectedOrgId);
+          setWorkspaces(scoped);
+          setAllWorkspaces(data);
+          const counts: Record<string, number> = {};
+          for (const o of orgs) counts[o.id] = 0;
+          for (const ws of data) counts[ws.organization_id] = (counts[ws.organization_id] ?? 0) + 1;
+          setWorkspaceCountByOrg(counts);
+        })
+        .catch(() => {
+          if (!stale) setWorkspaces([]);
+        })
+        .finally(() => {
+          if (!stale) setLoadingWs(false);
+        });
+      return () => {
+        stale = true;
+      };
     }
     let stale = false;
     setLoadingWs(true);
@@ -128,7 +177,7 @@ export function useHomeWorkspaceState({
     return () => {
       stale = true;
     };
-  }, [api, selectedOrgId]);
+  }, [api, selectedOrgId, memberChatOnly, orgs]);
 
   useEffect(() => {
     if (!selectedOrgId || loadingWs) return;

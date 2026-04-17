@@ -12,6 +12,7 @@ import { EnterpriseUiReplicaPage } from "./pages/app/EnterpriseUiReplicaPage";
 import { SessionErrorBanner } from "./components/SessionErrorBanner";
 import { MarketingLandingPage } from "./pages/MarketingLandingPage";
 import { ProtectedAppShell } from "./layouts/ProtectedAppShell";
+import { AcceptInvitePage } from "./pages/AcceptInvitePage";
 
 /** Legacy URL → canonical dashboard chat */
 function WorkspaceToDashboardRedirect() {
@@ -58,6 +59,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<PublicEntryRoute />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
       {clerkEnabled && (
         <>
           <Route path="/sign-in/*" element={<ClerkSignInPage />} />

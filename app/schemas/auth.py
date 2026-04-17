@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -314,7 +315,15 @@ class ChatMessagePublic(BaseModel):
     role: str
     content: str
     citations: list[ChatCitationPublic] = Field(default_factory=list)
+    feedback: Literal["up", "down"] | None = None
     created_at: datetime
+
+
+class ChatMessageFeedbackRequest(BaseModel):
+    feedback: Literal["up", "down"] | None = Field(
+        default=None,
+        description="Use `up` or `down`; pass null to clear existing feedback.",
+    )
 
 
 class ChatTurnResponse(BaseModel):

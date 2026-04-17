@@ -10,6 +10,7 @@ import type {
 
 export type UserSummary = {
   is_platform_owner?: boolean;
+  org_ids_as_owner?: string[];
 };
 
 export type ApiClient = {
@@ -24,6 +25,7 @@ export type OrgDetailViewProps = {
   onUploadClick: (ws: Workspace) => void;
   onWorkspaceCreated: (workspaceId?: string) => void;
   onGoToWorkspace: (workspaceId?: string) => void;
+  onLaunchWorkspaceChat?: (workspaceId: string) => void;
   onNavigateToWorkspaces: () => void;
   onNavigateToTeam: () => void;
   onNavigateToDocuments: () => void;
@@ -98,6 +100,7 @@ export type OrganizationsPanelProps = {
   loadOrgs: () => Promise<void>;
   api: ApiClient;
   OrgDetailView: React.ComponentType<OrgDetailViewProps>;
+  onLaunchWorkspaceChat: (workspaceId: string) => void;
 };
 
 export type HomePanelRouterProps = {
@@ -155,7 +158,12 @@ export type HomePanelRouterProps = {
   ConnectorsPanel: React.ComponentType<ConnectorsPanelProps>;
   workspaceInContext: Workspace | null;
   BillingPanel: React.ComponentType;
-  AuditPanel: React.ComponentType<{ orgs: Org[]; selectedOrgId: string; workspaceScopeIds?: string[] }>;
+  AuditPanel: React.ComponentType<{
+    orgs: Org[];
+    selectedOrgId: string;
+    workspaceScopeIds?: string[];
+    workspaces?: Workspace[];
+  }>;
   workspaceScopeIds?: string[];
   canManageOrgSettings: boolean;
   canManageWorkspaceSettings: boolean;
@@ -175,4 +183,8 @@ export type HomePanelRouterProps = {
   UploadModal: React.ComponentType<UploadModalProps>;
   setOrgs: Dispatch<SetStateAction<Org[]>>;
   setErr: Dispatch<SetStateAction<string | null>>;
+  memberChatOnly: boolean;
+  memberAccountSettingsOpen: boolean;
+  setMemberAccountSettingsOpen: Dispatch<SetStateAction<boolean>>;
+  onLaunchWorkspaceChat: (workspaceId: string) => void;
 };

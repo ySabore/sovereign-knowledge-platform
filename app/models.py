@@ -70,6 +70,7 @@ class AuditAction(str, enum.Enum):
     document_deleted = "document_deleted"
     chat_session_deleted = "chat_session_deleted"
     connector_deleted = "connector_deleted"
+    api_http_mutation = "api_http_mutation"
 
 
 class User(Base):
@@ -365,6 +366,7 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
     citations_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
@@ -397,6 +399,7 @@ class AuditLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    actor_role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     organization_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True)
     action: Mapped[str] = mapped_column(String(64), index=True)
