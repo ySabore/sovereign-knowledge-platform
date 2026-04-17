@@ -1,3 +1,11 @@
+# GPU-oriented stack: same services as docker-compose.prod.yml, but Ollama can use NVIDIA GPUs
+# (gpus: all). Default API URLs target the ollama service; if you run Ollama on the host instead,
+# set EMBEDDING_OLLAMA_BASE_URL / ANSWER_GENERATION_OLLAMA_BASE_URL to http://host.docker.internal:11434
+# (extra_hosts on api enables that on Docker Desktop).
+#
+# Bundled Ollama:
+#   docker compose -f docker-compose.gpu.yml --env-file .env --profile bundled-ollama up --build
+#
 services:
   postgres:
     restart: unless-stopped
@@ -50,6 +58,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         [
@@ -71,11 +81,12 @@ services:
       CLERK_ISSUER: ${CLERK_ISSUER:-}
       CLERK_AUDIENCE: ${CLERK_AUDIENCE:-}
       CLERK_JWT_LEEWAY_SECONDS: ${CLERK_JWT_LEEWAY_SECONDS:-120}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:8080}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_JSON: ${LOG_JSON:-true}
       DOCUMENT_STORAGE_ROOT: /app/data/documents
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      # With --profile bundled-ollama, http://ollama:11434; for host Ollama use host.docker.internal:11434.
       EMBEDDING_OLLAMA_BASE_URL: ${EMBEDDING_OLLAMA_BASE_URL:-http://ollama:11434}
       ANSWER_GENERATION_PROVIDER: ${ANSWER_GENERATION_PROVIDER:-extractive}
       ANSWER_GENERATION_MODEL: ${ANSWER_GENERATION_MODEL:-llama3.2}
@@ -83,6 +94,12 @@ services:
       OLLAMA_HTTP_TIMEOUT_SECONDS: ${OLLAMA_HTTP_TIMEOUT_SECONDS:-180}
       CHAT_MIN_CITATION_SCORE: ${CHAT_MIN_CITATION_SCORE:-0.30}
       CHAT_LEXICAL_OVERLAP_MIN: ${CHAT_LEXICAL_OVERLAP_MIN:-0.10}
+      RETRIEVAL_STRATEGY_DEFAULT: ${RETRIEVAL_STRATEGY_DEFAULT:-heuristic}
+      RRF_K: ${RRF_K:-60}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      COHERE_RERANK_MODEL: ${COHERE_RERANK_MODEL:-rerank-english-v3.0}
+      COHERE_RERANK_TIMEOUT_SECONDS: ${COHERE_RERANK_TIMEOUT_SECONDS:-30}
+      COHERE_RERANK_MAX_CHARS_PER_DOC: ${COHERE_RERANK_MAX_CHARS_PER_DOC:-4096}
       NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
       NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
       NANGO_HOST: ${NANGO_HOST:-https://api.nango.dev}

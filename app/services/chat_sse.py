@@ -83,6 +83,7 @@ async def sse_chat_turn_lines(
         )
         return
 
+    org = db.get(Organization, session.organization_id)
     try:
         hits = run_retrieval_pipeline(
             db,
@@ -92,13 +93,12 @@ async def sse_chat_turn_lines(
             user=user,
             query=query,
             requested_top_k=resolve_top_k(top_k),
+            org=org,
         )
     except EmbeddingServiceError as exc:
         db.rollback()
         yield _data_line({"type": "error", "detail": f"Embedding service unavailable: {exc}"})
         return
-
-    org = db.get(Organization, session.organization_id)
     answer_provider = org.preferred_chat_provider if org else None
 
     try:

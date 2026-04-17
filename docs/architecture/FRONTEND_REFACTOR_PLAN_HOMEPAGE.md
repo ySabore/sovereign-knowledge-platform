@@ -1,8 +1,14 @@
 # FRONTEND_REFACTOR_PLAN_HOMEPAGE.md
 
+## Status (2026-04)
+
+**Implementation tree:** `frontend/` — homepage/shell modularization is **in progress / materially advanced**: panel router, organizations panel, workspace/knowledge/nav hooks, sidebar, and topbar live under `frontend/src/features/home-shell/`. **Legacy `frontend/`** retains the pre-refactor layout until parity burn-in and archive.
+
+**Operational docs:** `docs/frontend-parity-checklist.md`, `docs/frontend-cutover-runbook.md`.
+
 ## Objective
 
-Refactor `frontend/src/pages/HomePage.tsx` from a giant orchestration file into a modular frontend shell that is easier to understand, test, and extend without breaking unrelated admin flows.
+Refactor `HomePage.tsx` from a giant orchestration file into a modular frontend shell that is easier to understand, test, and extend without breaking unrelated admin flows. **Primary path:** `frontend/src/pages/HomePage.tsx` + `frontend/src/features/home-shell/`. **Legacy reference:** `frontend/src/pages/HomePage.tsx`.
 
 This is a **structure and maintainability refactor plan**, not a redesign proposal.
 
@@ -88,7 +94,7 @@ Target size:
 
 ## 2. Extract shell layout pieces
 
-Create a `frontend/src/features/home-shell/` or `frontend/src/pages/home/` area.
+Create a `frontend/src/features/home-shell/` (or similar) area; avoid growing `HomePage.tsx` as the dumping ground.
 
 Suggested structure:
 
@@ -431,3 +437,4 @@ The right move is not to rewrite the frontend.
 The right move is to **turn `HomePage.tsx` from an everything-file into a shell composer with feature-owned children**.
 
 That gives SKP a frontend architecture that matches the maturity of the backend.
+

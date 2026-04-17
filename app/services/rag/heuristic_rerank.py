@@ -14,10 +14,21 @@ from app.config import settings
 from app.services.rag.types import RetrievalHit
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+_NUMERIC_MATCH_BONUS = 0.15
 
 
 def _tokens(text: str) -> set[str]:
-    return {m.group(0).lower() for m in _TOKEN_RE.finditer(text) if len(m.group(0)) > 2}
+    tokens: set[str] = set()
+    for m in _TOKEN_RE.finditer(text):
+        token = m.group(0).lower()
+        # Keep short numeric terms like "3" for block/page/date disambiguation.
+        if token.isdigit() or len(token) > 2:
+            tokens.add(token)
+    return tokens
+
+
+def _number_tokens(text: str) -> set[str]:
+    return {m.group(0) for m in _TOKEN_RE.finditer(text) if m.group(0).isdigit()}
 
 
 def lexical_overlap_score(query: str, chunk_text: str) -> float:
@@ -68,7 +79,16 @@ def apply_heuristic_rerank(
         return hits[:k]
 
     lex_scores = [lexical_overlap_score(query, h.content) for h in hits]
-    blended = [_blended_score(h.score, lx) for h, lx in zip(hits, lex_scores, strict=True)]
+    q_numbers = _number_tokens(query)
+    blended: list[float] = []
+    for h, lx in zip(hits, lex_scores, strict=True):
+        score = _blended_score(h.score, lx)
+        if q_numbers:
+            c_numbers = _number_tokens(h.content)
+            if c_numbers:
+                numeric_overlap = len(q_numbers & c_numbers) / len(q_numbers)
+                score += _NUMERIC_MATCH_BONUS * numeric_overlap
+        blended.append(score)
 
     if mode == "lexical_blend":
         order = sorted(range(len(hits)), key=lambda i: blended[i], reverse=True)

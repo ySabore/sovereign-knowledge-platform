@@ -53,7 +53,7 @@ Artifacts are written under `data/smoke/`.
 | http://127.0.0.1:8000/health/ai | Ollama up + embedding model present |
 | http://127.0.0.1:8000/docs | Swagger |
 
-Frontend (dev):
+Frontend (dev) — use the **refactor** app (recommended; port **5174** by default):
 
 ```powershell
 cd frontend
@@ -61,7 +61,11 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 and sign in with the seeded owner from `.env`.
+Open http://127.0.0.1:5174 (or the port Vite prints if 5174 is busy) and sign in with the seeded owner from `.env`.
+
+Legacy local dev (optional, port **5173**): `cd frontend` then `npm run dev`.
+
+**Docker UI:** with Compose up, the static SPA is usually at http://localhost:8080 (or `WEB_PORT`); ensure `CORS_ORIGINS` includes your dev origins (see `docs/configuration.md`).
 
 ## Configuration
 

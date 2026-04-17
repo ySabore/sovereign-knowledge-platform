@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "npm run typecheck",
+    "test:logic": "playwright test e2e/nav-state.logic.spec.ts e2e/home-topbar-labels.logic.spec.ts",
+    "verify:readiness": "npm run typecheck && npm run build && npm run test:logic"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.22.0",

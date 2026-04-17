@@ -1083,7 +1083,7 @@ DocumentFetchResult type:
 
 ```
 [x] User can authenticate: `POST /auth/login` (JWT) implemented; `GET /auth/me` returns **401** without `Authorization` (TestClient). Clerk JWT path implemented behind `CLERK_ENABLED` + `deps.get_current_user` (not exercised in pytest).
-[x] Chat UI + `frontend/src/lib/chatSse.ts` consume `text/event-stream` from `/chat/...` (manual browser QA recommended).
+[x] Chat UI + `frontend/src/lib/chatSse.ts` (legacy: `frontend/src/lib/chatSse.ts`) consume `text/event-stream` from `/chat/...` (manual browser QA recommended).
 [x] Assistant message + citations: backend persists `citations_json`; UI renders citation UX (manual QA recommended).
 [x] `/admin` + `GET /admin/metrics/summary` implemented (`AdminDashboardPage`, placeholder metrics JSON until telemetry).
 [x] `/admin/connectors` lists static catalog + activation UI (`AdminConnectorsPage`).
@@ -1145,4 +1145,5 @@ DocumentFetchResult type:
 3. **When Cursor gets stuck**, provide the relevant type definitions and ask it to implement just one function at a time.
 4. **Test before moving layers.** Don't build Layer 3 until Layer 2 auth is working — every service depends on having a valid orgId and userId.
 5. **Database first.** In SKP run `alembic upgrade head` (or generate revisions under `alembic/versions/`) before services depend on new tables — not Prisma in this repo.
+
 

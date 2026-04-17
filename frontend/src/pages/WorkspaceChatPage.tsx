@@ -148,9 +148,14 @@ export function WorkspaceChatPage() {
         </header>
 
         <div className="sk-panel sk-spaced">
-          <h3 style={{ marginTop: 0 }}>Upload PDF</h3>
+          <h3 style={{ marginTop: 0 }}>Upload document</h3>
           <form onSubmit={onUpload} className="sk-row">
-            <input type="file" name="file" accept="application/pdf" required />
+            <input
+              type="file"
+              name="file"
+              accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,.pptx,.xlsx,.xls,.csv,.rtf,.eml,.msg,.epub,.mobi,.png,.jpg,.jpeg,.webp,.tif,.tiff"
+              required
+            />
             <button className="sk-btn secondary" type="submit" disabled={uploading}>
               {uploading ? "Uploading…" : "Upload"}
             </button>

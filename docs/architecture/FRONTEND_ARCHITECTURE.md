@@ -2,7 +2,14 @@
 
 ## Purpose
 
-This document describes the **actual current frontend architecture** of SKP, where responsibilities live today, why the current shape works, and where the main structural risks are.
+This document describes the **actual SPA architecture** of SKP: where responsibilities live, why the shape works, and where structural risk remains.
+
+### Source tree (cutover target)
+
+- **Production cutover target:** `frontend/` — this is the SPA built by `frontend/Dockerfile` and referenced from `docker-compose.prod.yml` / `docker-compose.gpu.yml` as the `web` service.
+- **Legacy tree:** `frontend-legacy-20260416/` — archived pre-refactor snapshot kept as rollback backup.
+
+Unless a path is explicitly labeled *legacy*, file paths below refer to **`frontend/src/...`**.
 
 It is intentionally grounded in the current codebase, especially:
 - `frontend/src/App.tsx`
@@ -10,6 +17,7 @@ It is intentionally grounded in the current codebase, especially:
 - `frontend/src/pages/HomePage.tsx`
 - `frontend/src/pages/app/DashboardPage.tsx`
 - `frontend/src/context/AuthContext.tsx`
+- `frontend/src/features/home-shell/*` — extracted shell routing, nav/workspace/knowledge hooks, org panel, sidebar/topbar
 
 This is not a future-state redesign doc.
 It is a map of the frontend as it exists now, with clear guidance for the next refactor steps.
@@ -52,7 +60,7 @@ At a high level, the app is organized around:
 - `frontend/src/layouts/ProtectedAppShell.tsx`
   - authenticated bootstrap for org list / platform navigation context
 - `frontend/src/pages/HomePage.tsx`
-  - current organization/workspace admin shell and control tower
+  - organization/workspace admin shell (orchestration + composition; heavy logic moved into `features/home-shell` hooks and panels)
 - `frontend/src/pages/app/DashboardPage.tsx`
   - workspace chat experience, standalone or embedded
 
@@ -111,7 +119,7 @@ This file already reflects a healthier architecture than `HomePage.tsx`:
 ### Current limitation
 
 It stops at bootstrap.
-After that, much of the higher-level shell logic collapses into `HomePage.tsx` instead of staying modular.
+After that, shell behavior still composes in `HomePage.tsx`, but substantial pieces now live in `features/home-shell` (nav locks, workspace state, knowledge gate, panel router, sidebar/topbar).
 
 ---
 
@@ -120,6 +128,8 @@ After that, much of the higher-level shell logic collapses into `HomePage.tsx` i
 ## What `HomePage.tsx` really is
 
 Despite the filename, `HomePage.tsx` behaves less like a simple page and more like an **application shell for org/workspace operations**.
+
+In `frontend`, much of the former inline orchestration has been extracted into `src/features/home-shell/` (e.g. `HomePanelRouter`, `OrganizationsPanel`, `useHomeWorkspaceState`, `useOrgKnowledgeGate`, `useHomeNavState`, `HomeSidebar`, `HomeTopBar`). The page remains the wiring root for org creation state and panel composition.
 
 It currently acts as the control layer for:
 - platform-owner scope switching
@@ -139,8 +149,9 @@ It currently acts as the control layer for:
 
 ### Architectural reality
 
-This means the frontend currently has a strong center of gravity in one file.
-That made early iteration fast, but it now creates maintainability drag.
+**Legacy `frontend/`:** a strong center of gravity still sits in one very large file.
+
+**`frontend/`:** the same product surface is preserved while the shell is modularized; remaining risk is continued discipline (avoid re-inflating `HomePage.tsx` and keep contracts in `features/home-shell/contracts.ts` / `types.ts`).
 
 ### Why this happened
 
@@ -245,7 +256,7 @@ The current frontend generally follows this flow:
 The biggest frontend architectural risk is **not** that the frontend is broken.
 It is that the frontend is becoming expensive to change safely.
 
-That risk is concentrated in `HomePage.tsx` because it combines:
+**Legacy `frontend/`:** that risk is concentrated in `HomePage.tsx` because it combines:
 - navigation logic
 - scope logic
 - backend-backed admin features
@@ -258,6 +269,8 @@ That risk is concentrated in `HomePage.tsx` because it combines:
 - slower onboarding for any engineer touching the frontend
 - harder testing strategy
 - increased chance that unrelated features interfere with each other
+
+**`frontend/`:** risk is reduced by extraction and logic tests, but parity and operational burn-in remain the real production gate (see `docs/frontend-parity-checklist.md`).
 
 ---
 
@@ -273,12 +286,12 @@ The correct next move is **modularization, not redesign**.
 - `DashboardPage.tsx` as the primary chat feature surface
 
 ### Change
-- reduce `HomePage.tsx` to a thin shell composer
+- reduce `HomePage.tsx` to a thin shell composer (**largely done in `frontend`** via `features/home-shell`)
 - extract scope selectors into dedicated components
 - extract org settings into a feature module
 - extract upload modal into a dedicated feature component
-- move panel switching into a `HomePanelRouter`
-- gradually move shell state into a dedicated hook
+- move panel switching into a `HomePanelRouter` (**done in `frontend`**)
+- gradually move shell state into dedicated hooks (**workspace, knowledge gate, nav: done in `frontend`**)
 
 This direction is detailed in:
 - `FRONTEND_REFACTOR_PLAN_HOMEPAGE.md`
@@ -313,14 +326,17 @@ The frontend is easiest to reason about if treated as four layers:
 - shell-specific buttons/inputs/badges/dropdowns
 - generic shared UI pieces where reuse is real
 
-Today, layer 2 and layer 3 are too collapsed into `HomePage.tsx`.
-The refactor should separate them.
+In legacy `frontend/`, layer 2 and layer 3 were too collapsed into `HomePage.tsx`.
+
+In `frontend/`, layer 2 vs 3 separation is **materially improved**; keep new feature work in feature modules rather than the page file.
 
 ---
 
 ## 12. Near-term refactor priority
 
-Highest-value low-risk extractions:
+**`frontend` status (high level):** panel router, nav/workspace/knowledge hooks, organizations panel, sidebar, and topbar are extracted; continue with any remaining inline chunks in `HomePage.tsx`, upload/documents coupling, and broader route-level code splitting.
+
+Legacy `frontend/` highest-value extractions (if that tree is still maintained):
 1. organization selector
 2. workspace selector
 3. organization settings panel
@@ -329,7 +345,7 @@ Highest-value low-risk extractions:
 
 After that:
 6. sidebar and topbar extraction
-7. `useHomeShellState`
+7. consolidated shell state hook(s)
 8. feature-specific data hooks where they reduce real duplication
 
 ---
@@ -343,8 +359,8 @@ Its strongest current architectural pieces are:
 - protected bootstrap shell
 - reusable chat surface
 
-Its weakest current architectural point is:
+Its weakest architectural point in **legacy `frontend/`** is:
 - the oversized, multi-responsibility `HomePage.tsx` shell
 
-So the right architecture move is straightforward:
-**preserve behavior, keep the current product surface, and refactor the org/workspace shell into feature-owned modules around a thinner `HomePage.tsx`.**
+In **`frontend/`**, the same product intent applies: **preserve behavior** while keeping the shell thin and feature-owned. Operational readiness is tracked in `docs/frontend-parity-checklist.md` and `docs/frontend-cutover-runbook.md`.
+

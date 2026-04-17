@@ -103,8 +103,10 @@ This file tracks delivery status against the current codebase reality, not older
 ### 1. Documentation wording drift
 Some older product/demo docs still describe a narrower system than the current codebase actually implements.
 
-### 2. Frontend maintainability hotspot
-`frontend/src/pages/HomePage.tsx` remains the biggest frontend structural risk.
+### 2. Frontend maintainability / cutover
+**Legacy `frontend/`:** `HomePage.tsx` remains the biggest structural risk (monolithic shell).
+
+**`frontend/`:** shell logic is modularized under `src/features/home-shell/`; remaining risk is **parity**, **operational burn-in**, and avoiding re-expansion of `HomePage.tsx`. Track readiness in `docs/frontend-parity-checklist.md` and `docs/frontend-cutover-runbook.md`.
 
 ### 3. Repo hygiene
 Broad working-tree changes, generated assets, and demo corpora still need ongoing organization and selective cleanup.
@@ -126,3 +128,4 @@ The main work now is:
 - structural cleanup
 - UX verification and refactor
 - packaging and hardening discipline
+

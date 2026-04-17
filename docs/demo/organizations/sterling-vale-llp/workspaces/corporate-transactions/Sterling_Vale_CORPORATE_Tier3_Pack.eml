@@ -1,0 +1,28 @@
+From: knowledge-demo@sterlingvale.example
+To: team@sterlingvale.example
+Subject: Tier 3 Demo Mail - Corporate & Transactions
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============3476540120129670652=="
+
+--===============3476540120129670652==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Tier 3 EML body for Corporate & Transactions. Tag CORPORATE. Focus: vendor MS=
+As, indemnity, and deal closing.
+
+This message is used to verify header/body extraction and attachment parsing =
+in ingestion.
+
+--===============3476540120129670652==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment;
+ filename="Sterling_Vale_CORPORATE_Tier3_Pack_attachment.txt"
+MIME-Version: 1.0
+
+Attachment marker SVL-CORPORATE-T3-EMAIL-ATTACH.
+Workspace=Corporate & Transactions
+Use this marker in retrieval tests.
+
+--===============3476540120129670652==--

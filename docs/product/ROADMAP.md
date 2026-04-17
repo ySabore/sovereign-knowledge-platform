@@ -64,7 +64,7 @@ Delivered in repo:
 - Dashboard and workspace navigation
 - Workspace chat page with citation-oriented UX
 - Admin navigation and admin page set
-- Frontend build output under `frontend/dist`
+- Frontend build output under `frontend/dist` (production `web` image); legacy `frontend/dist` until archive
 
 Still needed:
 - Fresh browser-backed validation of the current upload + chat happy path
@@ -108,3 +108,4 @@ NEXT:
 
 ## Guardrail
 Do not treat the platform as unproven anymore. The real gate is now **current-state regression proof**, not first-time capability proof.
+

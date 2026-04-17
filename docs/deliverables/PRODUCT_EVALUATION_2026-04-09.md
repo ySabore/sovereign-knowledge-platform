@@ -28,7 +28,7 @@
 ### 1. First Impression (Marketing/Landing)
 **Status:** ✓ EXISTS
 - Vite/React frontend with dark enterprise UI
-- Landing page exists in `frontend/src/pages/MarketingLandingPage.tsx`
+- Landing page exists in `frontend/src/pages/MarketingLandingPage.tsx` (legacy copy: `frontend/src/pages/MarketingLandingPage.tsx`)
 - Professional appearance matching enterprise-ui-screens.html spec
 
 **Competitive comparison:**
@@ -165,3 +165,4 @@ Configured but not validated:
 
 **Ship the core RAG demo** (org → workspace → upload → chat) **it's competitive.**  
 **Defer** admin analytics, connectors, and billing to v1.1 unless critical for this client.
+

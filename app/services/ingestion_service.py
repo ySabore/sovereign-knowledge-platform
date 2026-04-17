@@ -150,7 +150,7 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
             external_id=ext,
             permission_user_ids=params.permission_user_ids,
         )
-    elif st in ("pdf-upload", "upload"):
+    elif st in ("pdf-upload", "file-upload", "upload"):
         ensure_upload_permission_row(db, document=document)
 
     db.commit()

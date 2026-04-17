@@ -151,7 +151,15 @@ In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON su
 
 ## Frontend (Vite)
 
-See `frontend/README.md`. Typical dev: leave `VITE_API_BASE` unset to use `/api` with the Vite proxy.
+**Primary app:** `frontend/` (package `skp-web`). See `frontend/README.md`.
+
+**Legacy archived app:** `frontend-legacy-20260416/` (kept as backup during transition).
+
+Typical local dev: leave `VITE_API_BASE` unset so the browser calls `/api` and Vite proxies to the API (see `frontend/vite.config.ts`).
+
+**Ports:** `frontend` defaults to dev port **5173**. Ensure `CORS_ORIGINS` on the API includes every origin you use (see root `.env.example`; Docker Compose defaults include both local Vite ports and `http://localhost:8080` for the `web` container).
+
+**Production static UI:** `docker-compose.prod.yml` and `docker-compose.gpu.yml` build the `web` service from **`frontend/Dockerfile`** (nginx serves `dist/` and proxies `/api` to the API). Cutover checklist: `docs/frontend-parity-checklist.md`.
 
 ---
 
@@ -166,3 +174,4 @@ See `frontend/README.md`. Typical dev: leave `VITE_API_BASE` unset to use `/api`
 - Verify readiness via:
   - `/health/ready` (DB + Redis)
   - `/health/ai` (Ollama reachable + embedding model installed)
+

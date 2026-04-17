@@ -23,12 +23,14 @@ This folder is organized by purpose.
 - `architecture/INGESTION_AND_RETRIEVAL.md` — ingestion and retrieval pipeline
 - `architecture/ROLES_AND_USERS.md` — roles, users, and access model
 - `architecture/TECHDECISIONS.md` — technical decisions
-- `architecture/FRONTEND_ARCHITECTURE.md` — current frontend architecture map
-- `architecture/FRONTEND_REFACTOR_PLAN_HOMEPAGE.md` — targeted frontend cleanup plan
+- `architecture/FRONTEND_ARCHITECTURE.md` — SPA architecture map (`frontend` as cutover target; legacy `frontend` noted where still present)
+- `architecture/FRONTEND_REFACTOR_PLAN_HOMEPAGE.md` — targeted homepage/shell modularization plan (implementation lives under `frontend/src/features/home-shell/`)
 
 ### Operations
 - `configuration.md` — environment and runtime config reference
 - `deploy/GPU_RTX5090.md` — GPU-first deployment runbook
+- `frontend-parity-checklist.md` — pre-cutover parity and readiness gates
+- `frontend-cutover-runbook.md` — deploy, monitoring, rollback for promoting `frontend`
 
 ### Evidence and status artifacts
 - `deliverables/README.md`
@@ -53,3 +55,4 @@ To reduce documentation drift:
 ## Cleanup note
 
 If a doc duplicates another doc at a more specific location, prefer the more specific location as source of truth and convert the duplicate into a pointer or remove it.
+

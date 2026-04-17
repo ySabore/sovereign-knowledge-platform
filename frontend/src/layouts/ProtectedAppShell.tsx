@@ -13,9 +13,13 @@ export type BootstrapOrg = {
   preferred_chat_provider?: string | null;
   preferred_chat_model?: string | null;
   openai_api_key_configured?: boolean;
+  cohere_api_key_configured?: boolean;
   anthropic_api_key_configured?: boolean;
   openai_api_base_url?: string | null;
   anthropic_api_base_url?: string | null;
+  ollama_base_url?: string | null;
+  retrieval_strategy?: string | null;
+  use_hosted_rerank?: boolean;
 };
 
 export type OrgsOutletContext = {

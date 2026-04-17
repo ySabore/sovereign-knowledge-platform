@@ -1,0 +1,28 @@
+From: knowledge-demo@sterlingvale.example
+To: team@sterlingvale.example
+Subject: Tier 3 Demo Mail - General
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============7167834718238534307=="
+
+--===============7167834718238534307==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Tier 3 EML body for General. Tag GENERAL. Focus: firm-wide operations, retain=
+ers, and administrative coordination.
+
+This message is used to verify header/body extraction and attachment parsing =
+in ingestion.
+
+--===============7167834718238534307==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment;
+ filename="Sterling_Vale_GENERAL_Tier3_Pack_attachment.txt"
+MIME-Version: 1.0
+
+Attachment marker SVL-GENERAL-T3-EMAIL-ATTACH.
+Workspace=General
+Use this marker in retrieval tests.
+
+--===============7167834718238534307==--

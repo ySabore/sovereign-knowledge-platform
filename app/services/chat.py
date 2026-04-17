@@ -9,7 +9,11 @@ import httpx
 from app.config import settings
 from app.models import Organization
 from app.services.llm.cloud_chat import complete_anthropic_chat, complete_openai_chat
-from app.services.org_chat_credentials import resolve_anthropic_for_org, resolve_openai_for_org
+from app.services.org_chat_credentials import (
+    ollama_base_url_for_org,
+    resolve_anthropic_for_org,
+    resolve_openai_for_org,
+)
 from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.rag.heuristic_rerank import lexical_overlap_score
 from app.services.rag.prompts import build_ollama_grounded_prompt, format_evidence_lines_for_prompt
@@ -191,7 +195,7 @@ def _generate_ollama_answer(
     model = preferred_chat_model_from_org(org) or settings.answer_generation_model
     try:
         response = httpx.post(
-            f"{settings.answer_generation_ollama_base_url.rstrip('/')}/api/generate",
+            f"{ollama_base_url_for_org(org)}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,

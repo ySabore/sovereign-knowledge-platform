@@ -7,6 +7,13 @@ from app.models import Organization
 from app.services.field_encryption import decrypt_org_secret
 
 
+def ollama_base_url_for_org(org: Organization | None) -> str:
+    """Base URL for Ollama /api/generate and embeddings routing (no trailing slash)."""
+    if org and org.ollama_base_url and str(org.ollama_base_url).strip():
+        return str(org.ollama_base_url).strip().rstrip("/")
+    return settings.answer_generation_ollama_base_url.rstrip("/")
+
+
 def resolve_openai_for_org(org: Organization | None) -> tuple[str, str, str]:
     """Returns (api_key, model, base_url_without_trailing_slash)."""
     key: str | None = None

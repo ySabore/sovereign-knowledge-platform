@@ -6,6 +6,7 @@ export type PublicConfig = {
   nango_configured?: boolean;
   features?: {
     nango_connect?: boolean;
+    cohere_rerank?: boolean;
   };
 };
 

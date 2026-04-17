@@ -1,12 +1,22 @@
 # Production-shaped stack: Postgres (pgvector), Redis, API, static UI (nginx).
-# Ollama stays on the host or use docker-compose.gpu.yml — point EMBEDDING_OLLAMA_BASE_URL at it.
+# Ollama: default URLs target the host (Docker Desktop: host.docker.internal:11434).
+# Optional in-compose Ollama (CPU): add profile bundled-ollama and point URLs at the service:
+#   EMBEDDING_OLLAMA_BASE_URL=http://ollama:11434
+#   ANSWER_GENERATION_OLLAMA_BASE_URL=http://ollama:11434
+#   docker compose -f docker-compose.prod.yml --env-file .env --profile bundled-ollama up --build
+# GPU-accelerated Ollama: use docker-compose.gpu.yml with the same profile (see file header there).
 # Open the app at http://localhost:${WEB_PORT:-8080} (UI proxies /api to the API).
 #
 # Usage:
 #   docker compose -f docker-compose.prod.yml --env-file .env up --build
 #
+# Clerk (optional): set CLERK_ENABLED=true, CLERK_ISSUER (Frontend API URL), and VITE_CLERK_PUBLISHABLE_KEY
+# in `.env` so the API accepts Clerk session JWTs and the `web` build embeds the publishable key.
+# Production SPA target: `frontend`.
+#
 services:
   postgres:
+    restart: unless-stopped
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-skp}
@@ -23,6 +33,7 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     ports:
       - "${REDIS_PORT:-6380}:6379"
@@ -34,26 +45,69 @@ services:
       timeout: 3s
       retries: 5
 
+  # Optional: CPU Ollama inside Compose (no GPU passthrough). For NVIDIA GPU use docker-compose.gpu.yml.
+  ollama:
+    profiles:
+      - bundled-ollama
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://skp:skp@postgres:5432/skp}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       JWT_ISSUER: ${JWT_ISSUER:-sovereign-knowledge-platform}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      CLERK_ENABLED: ${CLERK_ENABLED:-false}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_AUDIENCE: ${CLERK_AUDIENCE:-}
+      CLERK_JWT_LEEWAY_SECONDS: ${CLERK_JWT_LEEWAY_SECONDS:-120}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:8080}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_JSON: ${LOG_JSON:-true}
       DOCUMENT_STORAGE_ROOT: /app/data/documents
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      # Chat can use per-org ollama_base_url (Org settings) to override ANSWER_GENERATION_OLLAMA_BASE_URL.
       EMBEDDING_OLLAMA_BASE_URL: ${EMBEDDING_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       ANSWER_GENERATION_OLLAMA_BASE_URL: ${ANSWER_GENERATION_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      ANSWER_GENERATION_PROVIDER: ${ANSWER_GENERATION_PROVIDER:-extractive}
+      ANSWER_GENERATION_MODEL: ${ANSWER_GENERATION_MODEL:-llama3.2}
       OLLAMA_HTTP_TIMEOUT_SECONDS: ${OLLAMA_HTTP_TIMEOUT_SECONDS:-180}
       CHAT_MIN_CITATION_SCORE: ${CHAT_MIN_CITATION_SCORE:-0.30}
       CHAT_LEXICAL_OVERLAP_MIN: ${CHAT_LEXICAL_OVERLAP_MIN:-0.10}
+      RETRIEVAL_STRATEGY_DEFAULT: ${RETRIEVAL_STRATEGY_DEFAULT:-heuristic}
+      RRF_K: ${RRF_K:-60}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      COHERE_RERANK_MODEL: ${COHERE_RERANK_MODEL:-rerank-english-v3.0}
+      COHERE_RERANK_TIMEOUT_SECONDS: ${COHERE_RERANK_TIMEOUT_SECONDS:-30}
+      COHERE_RERANK_MAX_CHARS_PER_DOC: ${COHERE_RERANK_MAX_CHARS_PER_DOC:-4096}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
+      NANGO_HOST: ${NANGO_HOST:-https://api.nango.dev}
       SEED_PLATFORM_OWNER_EMAIL: ${SEED_PLATFORM_OWNER_EMAIL:-owner@example.com}
       SEED_PLATFORM_OWNER_PASSWORD: ${SEED_PLATFORM_OWNER_PASSWORD:?set owner password}
     volumes:
@@ -72,12 +126,15 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   skp_pgdata:
   skp_redis:
   skp_documents:
+  ollama_data:

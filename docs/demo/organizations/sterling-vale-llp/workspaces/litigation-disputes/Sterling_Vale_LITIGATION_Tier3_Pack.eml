@@ -1,0 +1,28 @@
+From: knowledge-demo@sterlingvale.example
+To: team@sterlingvale.example
+Subject: Tier 3 Demo Mail - Litigation & Disputes
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============2276904069580455340=="
+
+--===============2276904069580455340==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Tier 3 EML body for Litigation & Disputes. Tag LITIGATION. Focus: motion prac=
+tice, discovery, and docket control.
+
+This message is used to verify header/body extraction and attachment parsing =
+in ingestion.
+
+--===============2276904069580455340==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment;
+ filename="Sterling_Vale_LITIGATION_Tier3_Pack_attachment.txt"
+MIME-Version: 1.0
+
+Attachment marker SVL-LITIGATION-T3-EMAIL-ATTACH.
+Workspace=Litigation & Disputes
+Use this marker in retrieval tests.
+
+--===============2276904069580455340==--

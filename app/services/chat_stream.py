@@ -24,7 +24,11 @@ from app.services.chat import (
     preferred_chat_model_from_org,
 )
 from app.services.llm.cloud_chat import stream_anthropic_chat_tokens, stream_openai_chat_tokens
-from app.services.org_chat_credentials import resolve_anthropic_for_org, resolve_openai_for_org
+from app.services.org_chat_credentials import (
+    ollama_base_url_for_org,
+    resolve_anthropic_for_org,
+    resolve_openai_for_org,
+)
 from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.rag.types import RetrievalHit
 
@@ -55,7 +59,7 @@ async def _iter_ollama_token_stream(
 ) -> AsyncIterator[str]:
     prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
 
-    url = f"{settings.answer_generation_ollama_base_url.rstrip('/')}/api/generate"
+    url = f"{ollama_base_url_for_org(org)}/api/generate"
     model = preferred_chat_model_from_org(org) or settings.answer_generation_model
     body = {
         "model": model,

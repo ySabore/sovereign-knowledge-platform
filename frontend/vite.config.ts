@@ -3,6 +3,18 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("@clerk/")) return "vendor-clerk";
+          if (id.includes("recharts")) return "vendor-charts";
+          return "vendor";
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

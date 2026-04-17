@@ -22,7 +22,9 @@ SKP is a Docker-first full-stack application with these major layers:
 ## Runtime components
 
 ### 1. Frontend
-Located under `frontend/`.
+Primary SPA: **`frontend/`** (production cutover target; nginx static bundle from `frontend/Dockerfile`).
+
+Legacy SPA: **`frontend/`** (pre-refactor tree; retained until archive after parity burn-in).
 
 Responsibilities:
 - authentication-aware app shell
@@ -35,7 +37,7 @@ Responsibilities:
 
 Key characteristics:
 - React Router based navigation
-- protected app shell (`frontend/src/layouts/ProtectedAppShell.tsx`)
+- protected app shell (`frontend/src/layouts/ProtectedAppShell.tsx`; legacy: `frontend/src/layouts/ProtectedAppShell.tsx`)
 - dashboard-centered workspace UX
 - admin and operator surfaces already exist beyond a simple MVP shell
 
@@ -122,7 +124,7 @@ Primary services in that stack:
 - Ollama can run either:
   - inside Compose via the optional profile, or
   - on the host, referenced through `host.docker.internal`
-- The frontend is deployed as a separate web container.
+- The SPA is deployed as the `web` service: image build context uses **`frontend/Dockerfile`** (static files + `frontend/nginx.conf` proxying `/api` to the API).
 - The API container mounts a persistent document storage volume.
 
 ## Domain model
@@ -393,8 +395,8 @@ Current strengths of the codebase:
 ### 1. Documentation drift
 The architecture docs were behind the codebase. They described several capabilities as planned that are already implemented.
 
-### 2. Large frontend shell complexity
-`frontend/src/pages/HomePage.tsx` has become a very large orchestration component. It works, but it is now an architectural hotspot and should eventually be decomposed.
+### 2. Large frontend shell complexity (legacy tree)
+In **`frontend/`**, `HomePage.tsx` remains a very large orchestration component. In **`frontend/`**, the same surface is modularized under `src/features/home-shell/`; ongoing discipline is required so the page does not re-expand. Cutover and parity are tracked in `docs/frontend-parity-checklist.md`.
 
 ### 3. Mixed maturity levels
 The system combines:
@@ -412,9 +414,9 @@ The current ingestion path is still primarily synchronous in request flow. That 
 This architecture doc should be the top-level map. The next docs to tighten are:
 - `TECHDECISIONS.md` — update to reflect current retrieval, ingestion, and provider decisions
 - `ROLES_AND_USERS.md` — verify against actual API/UI behavior
-- a new `docs/architecture/INGESTION_AND_RETRIEVAL.md`
-- a new `docs/architecture/FRONTEND_ARCHITECTURE.md`
-- a new `docs/architecture/DEPLOYMENT_ARCHITECTURE.md`
+- `INGESTION_AND_RETRIEVAL.md` — keep aligned with pipeline code
+- `FRONTEND_ARCHITECTURE.md` — keep aligned with `frontend` as the SPA source of truth
+- optional: `DEPLOYMENT_ARCHITECTURE.md` — single doc for compose variants + rollback
 
 ## Source of truth
 
@@ -429,6 +431,8 @@ For the current implemented architecture, the main source-of-truth files are:
 - `app/services/rag/pipeline.py`
 - `app/services/chat.py`
 - `docker-compose.gpu.yml`
+- `frontend/Dockerfile`
 - `frontend/src/App.tsx`
 - `frontend/src/layouts/ProtectedAppShell.tsx`
 - `frontend/src/pages/HomePage.tsx`
+

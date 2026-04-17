@@ -157,6 +157,36 @@ class Settings(BaseSettings):
         le=1.0,
         description="MMR tradeoff: higher = prefer relevance over diversity between chunks",
     )
+    retrieval_strategy_default: str = Field(
+        default="heuristic",
+        description="When org has no retrieval_strategy: heuristic | hybrid | rerank (rerank = vector + Cohere if key set)",
+    )
+    rrf_k: int = Field(
+        default=60,
+        ge=1,
+        le=500,
+        description="Reciprocal Rank Fusion constant k for hybrid vector+FTS merge",
+    )
+    cohere_api_key: str = Field(
+        default="",
+        description="Cohere API key for optional hosted Rerank (https://api.cohere.com/v1/rerank)",
+    )
+    cohere_rerank_model: str = Field(
+        default="rerank-english-v3.0",
+        description="Cohere rerank model id",
+    )
+    cohere_rerank_timeout_seconds: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=120.0,
+        description="HTTP timeout for Cohere rerank calls",
+    )
+    cohere_rerank_max_chars_per_doc: int = Field(
+        default=4096,
+        ge=256,
+        le=32000,
+        description="Truncate chunk text sent to Cohere per document",
+    )
     chat_min_citation_score: float = Field(
         default=0.30,
         ge=0.0,
@@ -175,7 +205,10 @@ class Settings(BaseSettings):
     # Per-org: preferred_chat_provider / preferred_chat_model; cloud keys encrypted with ORG_LLM_FERNET_KEY.
     answer_generation_provider: str = Field(
         default="extractive",
-        description="extractive | ollama | openai | anthropic",
+        description=(
+            "Platform default when org has no preferred_chat_provider: extractive | ollama | openai | anthropic. "
+            "For local GPU + Ollama, set ollama in .env; production often uses openai/anthropic or per-org overrides."
+        ),
     )
     answer_generation_model: str = "llama3.2"
     answer_generation_ollama_base_url: str = "http://127.0.0.1:11434"
@@ -251,6 +284,8 @@ class Settings(BaseSettings):
             "rag_rerank_mode": self.rag_rerank_mode,
             "rag_lexical_weight": self.rag_lexical_weight,
             "rag_mmr_lambda": self.rag_mmr_lambda,
+            "retrieval_strategy_default": self.retrieval_strategy_default,
+            "rrf_k": self.rrf_k,
             "rbac_mode": self.rbac_mode,
             "rate_limit_redis_enabled": self.rate_limit_redis_enabled,
             "chat_min_citation_score": self.chat_min_citation_score,
@@ -267,6 +302,8 @@ class Settings(BaseSettings):
                 "clerk_sign_in": self.clerk_enabled and bool(self.clerk_issuer.strip()),
                 "stripe_billing": bool((self.stripe_secret_key or "").strip().startswith(("sk_", "rk_"))),
                 "nango_connect": bool((self.nango_public_key or "").strip()) and bool((self.nango_secret_key or "").strip()),
+                "cohere_rerank": bool((self.cohere_api_key or "").strip())
+                or bool((self.org_llm_fernet_key or "").strip()),
             },
         }
 

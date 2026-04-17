@@ -1,0 +1,28 @@
+From: knowledge-demo@sterlingvale.example
+To: team@sterlingvale.example
+Subject: Tier 3 Demo Mail - Knowledge & Precedents
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============6662946199944169835=="
+
+--===============6662946199944169835==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Tier 3 EML body for Knowledge & Precedents. Tag KNOWLEDGE. Focus: clause bank=
+s, template maintenance, and research memos.
+
+This message is used to verify header/body extraction and attachment parsing =
+in ingestion.
+
+--===============6662946199944169835==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment;
+ filename="Sterling_Vale_KNOWLEDGE_Tier3_Pack_attachment.txt"
+MIME-Version: 1.0
+
+Attachment marker SVL-KNOWLEDGE-T3-EMAIL-ATTACH.
+Workspace=Knowledge & Precedents
+Use this marker in retrieval tests.
+
+--===============6662946199944169835==--

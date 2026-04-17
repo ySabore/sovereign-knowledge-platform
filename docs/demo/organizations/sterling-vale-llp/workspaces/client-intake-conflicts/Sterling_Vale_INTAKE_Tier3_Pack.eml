@@ -1,0 +1,28 @@
+From: knowledge-demo@sterlingvale.example
+To: team@sterlingvale.example
+Subject: Tier 3 Demo Mail - Client Intake & Conflicts
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============7695006788929793893=="
+
+--===============7695006788929793893==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Tier 3 EML body for Client Intake & Conflicts. Tag INTAKE. Focus: new busines=
+s intake, conflicts, and ethics walls.
+
+This message is used to verify header/body extraction and attachment parsing =
+in ingestion.
+
+--===============7695006788929793893==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment;
+ filename="Sterling_Vale_INTAKE_Tier3_Pack_attachment.txt"
+MIME-Version: 1.0
+
+Attachment marker SVL-INTAKE-T3-EMAIL-ATTACH.
+Workspace=Client Intake & Conflicts
+Use this marker in retrieval tests.
+
+--===============7695006788929793893==--
