@@ -9,6 +9,9 @@ dist/
 build/
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/tsconfig.tsbuildinfo
+.cursor/
 .idea/
 .vscode/
 *.log
