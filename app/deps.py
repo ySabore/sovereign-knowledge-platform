@@ -93,7 +93,7 @@ def require_platform_owner(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def require_admin_metrics_viewer(
+def require_metrics_viewer(
     organization_id: UUID | None = Query(
         None,
         description="Scope metrics to one organization. Required unless the user is a platform owner.",
@@ -108,7 +108,7 @@ def require_admin_metrics_viewer(
     if organization_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="organization_id query parameter is required for admin metrics",
+            detail="organization_id query parameter is required for metrics",
         )
     m = (
         db.query(OrganizationMembership)
@@ -123,30 +123,8 @@ def require_admin_metrics_viewer(
     if m.role != OrgMembershipRole.org_owner.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Organization owner role required to view admin metrics",
+            detail="Organization owner role required to view metrics",
         )
     return (user, organization_id)
 
 
-def require_org_owner_or_platform(
-    organization_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> User:
-    """Platform owner or org_owner may view org-scoped admin resources (e.g. connector status)."""
-    if user.is_platform_owner:
-        return user
-    m = (
-        db.query(OrganizationMembership)
-        .filter(
-            OrganizationMembership.user_id == user.id,
-            OrganizationMembership.organization_id == organization_id,
-        )
-        .one_or_none()
-    )
-    if m is not None and m.role == OrgMembershipRole.org_owner.value:
-        return user
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Organization owner or platform owner required",
-    )

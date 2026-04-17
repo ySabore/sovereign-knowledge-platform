@@ -4,12 +4,27 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import delete, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditAction, Document, DocumentChunk, DocumentStatus, IngestionJob, IngestionJobStatus, User, Workspace, WorkspaceMember, utcnow
+from app.models import (
+    AuditAction,
+    Document,
+    DocumentChunk,
+    DocumentStatus,
+    IngestionJob,
+    IngestionJobStatus,
+    Organization,
+    OrganizationMembership,
+    OrgMembershipRole,
+    User,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceMemberRole,
+    utcnow,
+)
 from app.routers.organizations import _require_workspace_admin, _write_audit_log
 from app.services.resource_cleanup import unlink_document_file
 from app.schemas.auth import (
@@ -24,7 +39,7 @@ from app.schemas.auth import (
     RetrievalQueryResponse,
 )
 from app.services.embeddings import EmbeddingServiceError, get_embedding_client
-from app.services.ingestion import build_chunks, extract_pdf_pages, persist_upload_file
+from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.permissions import ensure_upload_permission_row
 from app.services.rag import build_grounded_answer, resolve_top_k, run_retrieval_pipeline
@@ -34,26 +49,113 @@ from app.services.workspace_access import resolve_workspace_for_user
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+def _source_type_for_upload_filename(filename: str) -> str:
+    """Preserve legacy `pdf-upload` for PDFs; other uploads use `file-upload`."""
+    name = (filename or "").strip().lower()
+    return "pdf-upload" if name.endswith(".pdf") else "file-upload"
+
+
+def _content_type_for_upload(filename: str, reported: str | None) -> str:
+    if reported and reported.strip():
+        return reported.strip()
+    lower = (filename or "").lower()
+    if lower.endswith(".pdf"):
+        return "application/pdf"
+    if lower.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if lower.endswith(".txt"):
+        return "text/plain"
+    if lower.endswith(".md") or lower.endswith(".markdown"):
+        return "text/markdown"
+    if lower.endswith(".html") or lower.endswith(".htm"):
+        return "text/html"
+    if lower.endswith(".pptx"):
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    if lower.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if lower.endswith(".xls"):
+        return "application/vnd.ms-excel"
+    if lower.endswith(".csv"):
+        return "text/csv"
+    if lower.endswith(".rtf"):
+        return "application/rtf"
+    return "application/octet-stream"
+
+
 def _get_document_for_user(db: Session, document_id: UUID, user: User) -> Document | None:
-    if user.is_platform_owner:
-        return db.get(Document, document_id)
-    return (
-        db.query(Document)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Document.workspace_id)
-        .filter(Document.id == document_id, WorkspaceMember.user_id == user.id)
-        .one_or_none()
-    )
+    document = db.get(Document, document_id)
+    if document is None:
+        return None
+    workspace = resolve_workspace_for_user(db, document.workspace_id, user)
+    if workspace is None:
+        return None
+    return document
 
 
 def _get_ingestion_job_for_user(db: Session, job_id: UUID, user: User) -> IngestionJob | None:
-    if user.is_platform_owner:
-        return db.get(IngestionJob, job_id)
+    job = db.get(IngestionJob, job_id)
+    if job is None:
+        return None
+    workspace = resolve_workspace_for_user(db, job.workspace_id, user)
+    if workspace is None:
+        return None
+    return job
+
+
+def _workspace_membership_for_user(db: Session, workspace_id: UUID, user_id: UUID) -> WorkspaceMember | None:
     return (
-        db.query(IngestionJob)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == IngestionJob.workspace_id)
-        .filter(IngestionJob.id == job_id, WorkspaceMember.user_id == user.id)
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user_id)
         .one_or_none()
     )
+
+
+def _is_org_owner_for_workspace(db: Session, workspace: Workspace, user: User) -> bool:
+    membership = (
+        db.query(OrganizationMembership)
+        .filter(
+            OrganizationMembership.organization_id == workspace.organization_id,
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.role == OrgMembershipRole.org_owner.value,
+        )
+        .one_or_none()
+    )
+    return membership is not None
+
+
+def _require_workspace_contributor(db: Session, workspace_id: UUID, user: User) -> Workspace:
+    workspace = resolve_workspace_for_user(db, workspace_id, user)
+    if workspace is None:
+        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    if user.is_platform_owner or _is_org_owner_for_workspace(db, workspace, user):
+        return workspace
+    membership = _workspace_membership_for_user(db, workspace_id, user.id)
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    if membership.role not in {
+        WorkspaceMemberRole.workspace_admin.value,
+        WorkspaceMemberRole.editor.value,
+    }:
+        raise HTTPException(status_code=403, detail="Workspace contributor role required")
+    return workspace
+
+
+def _can_delete_document(db: Session, document: Document, user: User) -> bool:
+    if user.is_platform_owner:
+        return True
+    workspace = db.get(Workspace, document.workspace_id)
+    if workspace is None:
+        return False
+    if _is_org_owner_for_workspace(db, workspace, user):
+        return True
+    membership = _workspace_membership_for_user(db, document.workspace_id, user.id)
+    if membership is None:
+        return False
+    if membership.role == WorkspaceMemberRole.workspace_admin.value:
+        return True
+    if membership.role == WorkspaceMemberRole.editor.value and document.created_by == user.id:
+        return True
+    return False
 
 
 def _chunk_count_for_document(db: Session, document_id: UUID) -> int:
@@ -62,11 +164,18 @@ def _chunk_count_for_document(db: Session, document_id: UUID) -> int:
 
 def _document_to_status(db: Session, document: Document) -> DocumentStatusResponse:
     chunk_count = _chunk_count_for_document(db, document.id)
+    job = getattr(document, "ingestion_job", None)
+    if job is None and document.ingestion_job_id is not None:
+        job = db.get(IngestionJob, document.ingestion_job_id)
+    job_status = job.status if job is not None else None
+    job_error = job.error_message if job is not None else None
     return DocumentStatusResponse(
         id=document.id,
         organization_id=document.organization_id,
         workspace_id=document.workspace_id,
         ingestion_job_id=document.ingestion_job_id,
+        ingestion_job_status=job_status,
+        ingestion_job_error=job_error,
         filename=document.filename,
         content_type=document.content_type,
         status=document.status,
@@ -85,14 +194,16 @@ async def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentIngestionResponse:
-    workspace = resolve_workspace_for_user(db, workspace_id, user)
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    workspace = _require_workspace_contributor(db, workspace_id, user)
 
     stored = await persist_upload_file(file, settings.document_storage_root, workspace_id)
-    pages = extract_pdf_pages(stored.storage_path)
+    upload_name = (file.filename or "document").strip() or "document"
+    pages = extract_pages_from_upload(stored.storage_path, upload_name)
     if not pages:
-        raise HTTPException(status_code=422, detail="No extractable text found in PDF")
+        raise HTTPException(
+            status_code=422,
+            detail="No extractable text found in this file. Check that the document is not empty or image-only.",
+        )
 
     chunks = build_chunks(pages)
     if not chunks:
@@ -106,12 +217,13 @@ async def upload_document(
             detail=f"Embedding service unavailable: {exc}",
         ) from exc
 
+    src_label = _source_type_for_upload_filename(upload_name)
     ingestion_job = IngestionJob(
         organization_id=workspace.organization_id,
         workspace_id=workspace.id,
         created_by=user.id,
         status=IngestionJobStatus.completed.value,
-        source_filename=file.filename or "document.pdf",
+        source_filename=upload_name,
     )
     db.add(ingestion_job)
     db.flush()
@@ -121,11 +233,11 @@ async def upload_document(
         workspace_id=workspace.id,
         ingestion_job_id=ingestion_job.id,
         created_by=user.id,
-        filename=file.filename or "document.pdf",
-        content_type=file.content_type or "application/pdf",
+        filename=upload_name,
+        content_type=_content_type_for_upload(upload_name, file.content_type),
         storage_path=stored.storage_path,
         checksum_sha256=stored.checksum_sha256,
-        source_type="pdf-upload",
+        source_type=src_label,
         status=DocumentStatus.indexed.value,
         page_count=len(pages),
         last_indexed_at=utcnow(),
@@ -190,9 +302,7 @@ def ingest_text_document(
     Index raw text (e.g. from Confluence/Google Drive connectors). HTML is cleaned server-side.
     Idempotent on (organization_id, source_type, external_id): re-ingest replaces chunks.
     """
-    workspace = resolve_workspace_for_user(db, workspace_id, user)
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    workspace = _require_workspace_contributor(db, workspace_id, user)
 
     try:
         doc_id, n = ingest_document(
@@ -233,6 +343,7 @@ def list_workspace_documents(
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
     rows = (
         db.query(Document)
+        .options(joinedload(Document.ingestion_job))
         .filter(Document.workspace_id == workspace_id)
         .order_by(Document.created_at.desc())
         .all()
@@ -283,11 +394,12 @@ def delete_document_route(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    """Workspace admins (or platform owner) may remove an indexed document and its chunks; PDF file is deleted from storage when present."""
+    """Delete policy: platform/org/workspace admins may delete any doc; editors may delete only their own docs."""
     document = _get_document_for_user(db, document_id, user)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    _require_workspace_admin(db, document.workspace_id, user)
+    if not _can_delete_document(db, document, user):
+        raise HTTPException(status_code=403, detail="Not allowed to delete this document")
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -318,6 +430,7 @@ def search_workspace_documents(
     enforce_org_query_limits(request, db, workspace.organization_id, user)
 
     query = body.query.strip()
+    org = db.get(Organization, workspace.organization_id)
     try:
         top_k = resolve_top_k(body.top_k)
         hits = run_retrieval_pipeline(
@@ -328,6 +441,7 @@ def search_workspace_documents(
             user=user,
             query=query,
             requested_top_k=top_k,
+            org=org,
         )
     except EmbeddingServiceError as exc:
         raise HTTPException(

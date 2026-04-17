@@ -27,7 +27,7 @@ It is a **multi-tenant knowledge platform** with four major product surfaces fus
    - configurable answer providers
 
 4. **operator / pilot platform controls**
-   - admin metrics
+   - metrics
    - billing scaffolding
    - connector activation and sync
    - public runtime config
@@ -46,7 +46,8 @@ That matters because the repo should be read as a platform codebase, not a simpl
 - `scripts/`
 
 ### Frontend
-- `frontend/src/`
+- `frontend/src/` — **production cutover SPA** (compose `web` service builds from `frontend/Dockerfile`)
+- `frontend/src/` — legacy SPA tree (retained until archive; same product intent, pre-refactor layout)
 
 ### Deployment / docs
 - `docker-compose*.yml`
@@ -231,14 +232,13 @@ Handles:
 
 This shows SKP is aiming beyond manual uploads into synced knowledge sources.
 
-### `app/routers/admin_metrics.py`
-This is the **operator / stakeholder dashboard** API.
+### `app/routers/metrics.py`
+This is the **operator / stakeholder summary metrics** API.
 
 Handles:
-- summary metrics
-- connector lists
-- document lists
-- audit lists
+- summary metrics (`/metrics/summary`)
+
+Org-scoped document and audit lists now live under `app/routers/organizations.py`.
 
 ### `app/routers/billing.py`
 Billing surface and plan logic entrypoint.
@@ -387,7 +387,7 @@ Org-aware rate limits and admin/sync/query throttling.
 ### `app/services/billing.py`
 Plan enforcement helpers such as seat and connector limits.
 
-### `app/services/admin_metrics.py`
+### `app/services/metrics.py`
 Aggregations for operator dashboards.
 
 ### `app/services/query_log.py`
@@ -435,6 +435,8 @@ Low-intent / greeting handling so trivial chat does not need retrieval.
 
 ## Frontend architecture map
 
+Paths below use **`frontend/src/`** as the primary reference. The legacy tree under `frontend/src/` mirrors many of the same files until it is archived.
+
 ## 1. Frontend shell
 
 ### `frontend/src/App.tsx`
@@ -449,7 +451,6 @@ Protected routes:
 - home
 - organizations
 - dashboard workspace routes
-- admin routes
 - enterprise demo route
 
 ### `frontend/src/layouts/ProtectedAppShell.tsx`
@@ -474,7 +475,7 @@ This is the main frontend identity state source.
 ## 2. Frontend major pages
 
 ### `frontend/src/pages/HomePage.tsx`
-This is the biggest frontend file and currently acts like an application shell inside the protected shell.
+Acts as the org/workspace shell inside the protected app. In **`frontend`**, large parts of navigation, workspace state, knowledge gating, and panel routing live under **`src/features/home-shell/`** (`HomePanelRouter`, hooks, `HomeSidebar`, `HomeTopBar`, etc.). The legacy **`frontend/`** copy may still be a single oversized file.
 
 It handles large parts of:
 - org selection
@@ -489,9 +490,7 @@ It handles large parts of:
 - embedded chat routing
 
 Interpretation:
-this page has become a mini frontend platform on its own.
-
-It works, but it is now a **refactor hotspot**.
+in legacy `frontend/`, this page became a mini frontend platform on its own. In `frontend/`, that surface is intentionally decomposed while preserving UX.
 
 ### `frontend/src/pages/app/DashboardPage.tsx`
 This is the modern workspace chat experience.
@@ -511,15 +510,7 @@ Older or simpler workspace chat flow.
 
 Still useful as a simpler reference implementation, but the richer dashboard chat appears to be the primary current UX direction.
 
-### Admin pages under `frontend/src/pages/app/`
-These split out some admin functionality:
-- dashboard
-- documents
-- connectors
-- team
-- billing
-- audit
-- settings
+Admin functionality is now absorbed into the main shell (`HomePage` + home-shell feature modules) with role-based panel visibility.
 
 ---
 
@@ -570,14 +561,9 @@ The product is not vapor. There is real admin and operator surface area.
 
 ## Current hotspots and likely refactor priorities
 
-### 1. `frontend/src/pages/HomePage.tsx`
-This is the single biggest structural hotspot.
-
-Why:
-- huge surface area
-- too many responsibilities
-- likely hard to reason about safely
-- likely hard to test in isolation
+### 1. Org/workspace shell maintainability
+- **Legacy `frontend/`:** `HomePage.tsx` remains the single biggest structural hotspot (size and mixed concerns).
+- **`frontend/`:** risk shifts to **contract discipline** across `features/home-shell` and **parity** with the legacy app; run `npm run verify:readiness` in `frontend` and follow `docs/frontend-parity-checklist.md`.
 
 ### 2. docs lagging implementation
 Several docs still describe earlier product assumptions.
@@ -604,7 +590,7 @@ If you want to understand SKP fast, read in this order:
 8. `app/services/chat.py`
 9. `frontend/src/App.tsx`
 10. `frontend/src/layouts/ProtectedAppShell.tsx`
-11. `frontend/src/pages/HomePage.tsx`
+11. `frontend/src/pages/HomePage.tsx` (+ `frontend/src/features/home-shell/`)
 12. `frontend/src/pages/app/DashboardPage.tsx`
 
 That order gives the fastest path from platform model to user experience.
@@ -622,3 +608,4 @@ SKP is already a real platform-shaped codebase with these identities at once:
 
 The codebase’s main issue right now is not lack of substance.
 It is **keeping structure and docs aligned as the product expands.**
+

@@ -16,6 +16,8 @@ from app.models import (
     ChatMessageRole,
     ChatSession,
     Organization,
+    OrganizationMembership,
+    OrgMembershipRole,
     User,
     Workspace,
     WorkspaceMember,
@@ -49,8 +51,23 @@ from app.services.workspace_access import resolve_workspace_for_user
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+def _is_org_owner(db: Session, organization_id: UUID, user_id: UUID) -> bool:
+    membership = (
+        db.query(OrganizationMembership)
+        .filter(
+            OrganizationMembership.organization_id == organization_id,
+            OrganizationMembership.user_id == user_id,
+            OrganizationMembership.role == OrgMembershipRole.org_owner.value,
+        )
+        .one_or_none()
+    )
+    return membership is not None
+
+
 def _can_delete_chat_session(db: Session, session: ChatSession, user: User) -> bool:
     if user.is_platform_owner:
+        return True
+    if _is_org_owner(db, session.organization_id, user.id):
         return True
     if session.user_id is not None and session.user_id == user.id:
         return True
@@ -67,6 +84,11 @@ def _require_session_for_user(db: Session, session_id: UUID, user: User) -> Chat
         session = db.get(ChatSession, session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Chat session not found")
+        return session
+    session = db.get(ChatSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    if _is_org_owner(db, session.organization_id, user.id):
         return session
     session = (
         db.query(ChatSession)
@@ -167,13 +189,34 @@ def list_chat_sessions(
     workspace = resolve_workspace_for_user(db, workspace_id, user)
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
-
-    sessions = (
-        db.query(ChatSession)
-        .filter(ChatSession.workspace_id == workspace_id, ChatSession.user_id == user.id)
-        .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
-        .all()
-    )
+    is_org_admin = _is_org_owner(db, workspace.organization_id, user.id)
+    if user.is_platform_owner or is_org_admin:
+        sessions = (
+            db.query(ChatSession)
+            .filter(ChatSession.workspace_id == workspace_id)
+            .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+            .all()
+        )
+    else:
+        wm = (
+            db.query(WorkspaceMember)
+            .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id)
+            .one_or_none()
+        )
+        if wm is not None and wm.role == WorkspaceMemberRole.workspace_admin.value:
+            sessions = (
+                db.query(ChatSession)
+                .filter(ChatSession.workspace_id == workspace_id)
+                .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+                .all()
+            )
+        else:
+            sessions = (
+                db.query(ChatSession)
+                .filter(ChatSession.workspace_id == workspace_id, ChatSession.user_id == user.id)
+                .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+                .all()
+            )
     return [_serialize_session(session) for session in sessions]
 
 
@@ -234,6 +277,7 @@ def create_chat_message(
                 user=user,
                 query=query,
                 requested_top_k=resolve_top_k(body.top_k),
+                org=org,
             )
             answer_text, citations, generation_mode = generate_grounded_answer(
                 query,

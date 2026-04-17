@@ -13,7 +13,7 @@ from app.config import settings
 from app.logging_config import configure_logging
 from app.limiter import limiter
 from app.middleware import RequestIdMiddleware, SecurityHeadersMiddleware
-from app.routers import admin_metrics, api_chat, auth, billing, chat, connectors, documents, health, organizations, runtime_config, webhooks_clerk, webhooks_stripe
+from app.routers import api_chat, auth, billing, chat, connectors, documents, health, metrics, organizations, runtime_config, webhooks_clerk, webhooks_stripe
 
 configure_logging()
 
@@ -64,7 +64,7 @@ def create_app() -> FastAPI:
     application.include_router(chat.router)
     application.include_router(api_chat.router)
     application.include_router(connectors.router)
-    application.include_router(admin_metrics.router)
+    application.include_router(metrics.router)
     application.include_router(webhooks_clerk.router)
     application.include_router(webhooks_stripe.router)
     application.include_router(billing.router)

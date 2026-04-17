@@ -12,9 +12,13 @@ type Org = {
   preferred_chat_provider?: string | null;
   preferred_chat_model?: string | null;
   openai_api_key_configured?: boolean;
+  cohere_api_key_configured?: boolean;
   anthropic_api_key_configured?: boolean;
   openai_api_base_url?: string | null;
   anthropic_api_base_url?: string | null;
+  ollama_base_url?: string | null;
+  retrieval_strategy?: string | null;
+  use_hosted_rerank?: boolean;
 };
 
 type AdminSummary = {
@@ -50,7 +54,7 @@ export function PlatformOwnerDashboard({
   useEffect(() => {
     let cancelled = false;
     void api
-      .get<AdminSummary>("/admin/metrics/summary", { params: {} })
+      .get<AdminSummary>("/metrics/summary", { params: {} })
       .then(({ data }) => {
         if (!cancelled) setMetrics(data);
       })
@@ -152,7 +156,7 @@ export function PlatformOwnerDashboard({
           </div>
           <ul style={{ margin: 0, paddingLeft: 18, color: C.t2, fontSize: 13, lineHeight: 1.7 }}>
             <li>
-              <Link to="/admin/audit" style={{ color: C.accent, fontWeight: 600 }}>
+              <Link to="/home?panel=audit" style={{ color: C.accent, fontWeight: 600 }}>
                 Open audit log
               </Link>{" "}
               for sign-ins, exports, and admin actions.
@@ -160,7 +164,7 @@ export function PlatformOwnerDashboard({
             <li>Connector sync jobs run on a schedule; check workspace connectors for failures.</li>
             <li>
               Review{" "}
-              <Link to="/admin/billing" style={{ color: C.accent, fontWeight: 600 }}>
+              <Link to="/home?panel=billing" style={{ color: C.accent, fontWeight: 600 }}>
                 billing
               </Link>{" "}
               for seat limits and invoices.

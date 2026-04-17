@@ -28,6 +28,7 @@ class OrgMembershipRole(str, enum.Enum):
 
 class WorkspaceMemberRole(str, enum.Enum):
     workspace_admin = "workspace_admin"
+    editor = "editor"
     member = "member"
 
 
@@ -114,8 +115,29 @@ class Organization(Base):
     preferred_chat_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     openai_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     anthropic_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cohere_api_key_encrypted: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Fernet-encrypted Cohere API key for hosted Rerank (optional; overrides platform COHERE_API_KEY).",
+    )
     openai_api_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     anthropic_api_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    ollama_base_url: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        doc="Optional override for ANSWER_GENERATION_OLLAMA_BASE_URL (API must reach this host).",
+    )
+    retrieval_strategy: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="heuristic | hybrid | rerank — rerank uses vector retrieval + Cohere when org or platform API key is set.",
+    )
+    use_hosted_rerank: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        doc="With heuristic/hybrid fetch, run Cohere Rerank instead of lexical heuristic when org or platform Cohere key is set.",
+    )
 
     @property
     def openai_api_key_configured(self) -> bool:
@@ -124,6 +146,10 @@ class Organization(Base):
     @property
     def anthropic_api_key_configured(self) -> bool:
         return bool((self.anthropic_api_key_encrypted or "").strip())
+
+    @property
+    def cohere_api_key_configured(self) -> bool:
+        return bool((self.cohere_api_key_encrypted or "").strip())
 
     memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="organization")
     workspaces: Mapped[list[Workspace]] = relationship(back_populates="organization")

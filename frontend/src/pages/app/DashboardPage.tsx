@@ -448,7 +448,7 @@ export function DashboardPage({
               {latestAssistantCitations.length} cited
             </span>
             <span className="skc-pill skc-pill-ok">● Operational</span>
-            <Link className="skc-avatar" to="/admin">
+            <Link className="skc-avatar" to="/home">
               {user?.email?.slice(0, 2).toUpperCase() || "U"}
             </Link>
           </div>

@@ -1,9 +1,9 @@
 """
 Document-level RBAC.
 
-- `RBAC_MODE=simple` (phase 1–2): members see all indexed documents in workspaces they belong to;
-  org owners / platform owners behave like members for workspace-scoped retrieval.
-- `RBAC_MODE=full` (phase 3): only `DocumentPermission` rows grant access; missing row ⇒ deny.
+- `RBAC_MODE=simple`: workspace members see documents in their assigned workspaces;
+  org owners / platform owners may access workspace-scoped docs across their org.
+- `RBAC_MODE=full`: only `DocumentPermission` rows grant access; missing row denies access.
 """
 
 from __future__ import annotations
@@ -67,8 +67,7 @@ def get_accessible_document_ids(
     """
     Return document IDs the user may retrieve chunks for in this workspace.
 
-    Simple mode: workspace documents if the user is a workspace member, org owner, or any org member
-    (org-wide collaboration without a WorkspaceMember row — common with Clerk sign-ups).
+    Simple mode: workspace documents for workspace members and org owners.
     Full mode: explicit `DocumentPermission` rows only (org-wide `user_id` NULL or matching user).
     """
     if user and user.is_platform_owner:
@@ -78,11 +77,9 @@ def get_accessible_document_ids(
     mode = settings.rbac_mode.strip().lower()
     if mode != "full":
         if _is_org_owner(db, user_id, organization_id):
-            stmt = select(Document.id).where(Document.organization_id == organization_id)
+            stmt = select(Document.id).where(Document.workspace_id == workspace_id)
             return {row[0] for row in db.execute(stmt).all()}
-        if is_organization_member(db, user_id, organization_id) or _is_workspace_member(
-            db, user_id, workspace_id
-        ):
+        if _is_workspace_member(db, user_id, workspace_id):
             stmt = select(Document.id).where(Document.workspace_id == workspace_id)
             return {row[0] for row in db.execute(stmt).all()}
         return set()
@@ -142,6 +139,9 @@ def has_document_access(
         return False
 
     if user and user.is_platform_owner:
+        return True
+
+    if _is_org_owner(db, user_id, doc.organization_id):
         return True
 
     if not _is_workspace_member(db, user_id, doc.workspace_id):

@@ -21,7 +21,11 @@ class UserPublic(BaseModel):
     is_platform_owner: bool
     org_ids_as_owner: list[UUID] = Field(
         default_factory=list,
-        description="Organizations where this user is org_owner (admin metrics when not platform owner).",
+        description="Organizations where this user is org_owner.",
+    )
+    org_ids_as_workspace_admin: list[UUID] = Field(
+        default_factory=list,
+        description="Organizations where this user is workspace_admin in at least one workspace.",
     )
 
     model_config = {"from_attributes": True}
@@ -30,6 +34,17 @@ class UserPublic(BaseModel):
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=128, description="URL-safe slug, lowercase recommended")
+    preferred_chat_provider: str | None = Field(
+        default=None,
+        description="Optional initial value: extractive | ollama | openai | anthropic",
+        max_length=32,
+    )
+    preferred_chat_model: str | None = Field(default=None, max_length=128)
+    ollama_base_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Optional; API must reach this Ollama host when org uses ollama provider",
+    )
 
 
 class OrganizationUpdate(BaseModel):
@@ -44,8 +59,27 @@ class OrganizationUpdate(BaseModel):
     preferred_chat_model: str | None = Field(default=None, max_length=128)
     openai_api_key: str | None = Field(default=None, max_length=512, description="Write-only; platform owner only")
     anthropic_api_key: str | None = Field(default=None, max_length=512, description="Write-only; platform owner only")
+    cohere_api_key: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Write-only; platform owner only — Cohere Rerank API key for this org",
+    )
     openai_api_base_url: str | None = Field(default=None, max_length=512)
     anthropic_api_base_url: str | None = Field(default=None, max_length=512)
+    ollama_base_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Override platform Ollama URL for this org (org owner may set)",
+    )
+    retrieval_strategy: str | None = Field(
+        default=None,
+        max_length=32,
+        description="heuristic | hybrid | rerank — rerank uses Cohere when org or platform API key is set",
+    )
+    use_hosted_rerank: bool | None = Field(
+        default=None,
+        description="With heuristic/hybrid, use Cohere Rerank when org or platform API key is configured",
+    )
 
 
 class OrganizationPublic(BaseModel):
@@ -59,10 +93,21 @@ class OrganizationPublic(BaseModel):
     preferred_chat_model: str | None = None
     openai_api_key_configured: bool = False
     anthropic_api_key_configured: bool = False
+    cohere_api_key_configured: bool = False
     openai_api_base_url: str | None = None
     anthropic_api_base_url: str | None = None
+    ollama_base_url: str | None = None
+    retrieval_strategy: str | None = None
+    use_hosted_rerank: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class OrganizationOverviewStats(BaseModel):
+    """Aggregate counts for org overview cards (any org member may read)."""
+
+    member_count: int = Field(ge=0)
+    document_count: int = Field(ge=0)
 
 
 class WorkspaceCreate(BaseModel):
@@ -163,6 +208,8 @@ class DocumentStatusResponse(BaseModel):
     organization_id: UUID
     workspace_id: UUID
     ingestion_job_id: UUID | None
+    ingestion_job_status: str | None = None
+    ingestion_job_error: str | None = None
     filename: str
     content_type: str
     status: str

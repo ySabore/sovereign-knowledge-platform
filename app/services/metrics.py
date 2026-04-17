@@ -1,4 +1,4 @@
-"""Admin aggregates/lists for dashboard, docs, connectors, and audit views."""
+"""Metrics and analytics aggregates for dashboard, docs, connectors, and audit views."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ def _month_start_utc(now: datetime | None = None) -> datetime:
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def build_admin_metrics_summary(db: Session, *, organization_id: UUID | None) -> dict[str, Any]:
-    """Return JSON shape expected by `AdminDashboardPage` and stakeholder explainer (usage + gaps)."""
+def build_metrics_summary(db: Session, *, organization_id: UUID | None) -> dict[str, Any]:
+    """Return summary JSON for platform/org metrics panels."""
     now = datetime.now(timezone.utc)
     month_start = _month_start_utc(now)
     day_start_7d = now - timedelta(days=7)
@@ -218,6 +218,8 @@ def list_audit_events_for_org(
     *,
     organization_id: UUID,
     action: str | None = None,
+    workspace_id: UUID | None = None,
+    workspace_ids: list[UUID] | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     qry = (
@@ -227,6 +229,10 @@ def list_audit_events_for_org(
     )
     if action:
         qry = qry.filter(AuditLog.action == action.strip())
+    if workspace_id is not None:
+        qry = qry.filter(AuditLog.workspace_id == workspace_id)
+    elif workspace_ids:
+        qry = qry.filter(AuditLog.workspace_id.in_(workspace_ids))
     rows = qry.order_by(AuditLog.created_at.desc()).limit(max(1, min(limit, 1000))).all()
     out: list[dict[str, Any]] = []
     for ev, actor_email in rows:

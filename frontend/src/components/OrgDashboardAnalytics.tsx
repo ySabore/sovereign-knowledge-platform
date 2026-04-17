@@ -366,7 +366,7 @@ export function OrgDashboardAnalytics({
     setLoading(true);
     setErr(null);
     try {
-      const { data } = await api.get<Summary>("/admin/metrics/summary", {
+      const { data } = await api.get<Summary>("/metrics/summary", {
         params: { organization_id: organizationId },
       });
       setSummary(data);

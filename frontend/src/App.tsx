@@ -9,13 +9,6 @@ import { ClerkSignUpPage } from "./pages/ClerkSignUpPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { DashboardPage } from "./pages/app/DashboardPage";
 import { EnterpriseUiReplicaPage } from "./pages/app/EnterpriseUiReplicaPage";
-import { AdminConnectorsPage } from "./pages/app/AdminConnectorsPage";
-import { AdminDashboardPage } from "./pages/app/AdminDashboardPage";
-import { AdminDocumentsPage } from "./pages/app/AdminDocumentsPage";
-import { AdminTeamPage } from "./pages/app/AdminTeamPage";
-import { AdminBillingPage } from "./pages/app/AdminBillingPage";
-import { AdminAuditPage } from "./pages/app/AdminAuditPage";
-import { AdminSettingsPage } from "./pages/app/AdminSettingsPage";
 import { SessionErrorBanner } from "./components/SessionErrorBanner";
 import { MarketingLandingPage } from "./pages/MarketingLandingPage";
 import { ProtectedAppShell } from "./layouts/ProtectedAppShell";
@@ -84,22 +77,6 @@ export default function App() {
               <PlaceholderPage
                 title="Onboarding"
                 detail="Post-signup setup (org/workspace defaults) can be implemented here without changing the API shell."
-              />
-            }
-          />
-          <Route path="/admin" element={<AdminDashboardPage />} />
-          <Route path="/admin/connectors" element={<AdminConnectorsPage />} />
-          <Route path="/admin/documents" element={<AdminDocumentsPage />} />
-          <Route path="/admin/team" element={<AdminTeamPage />} />
-          <Route path="/admin/billing" element={<AdminBillingPage />} />
-          <Route path="/admin/audit" element={<AdminAuditPage />} />
-          <Route path="/admin/settings" element={<AdminSettingsPage />} />
-          <Route
-            path="/admin/usage"
-            element={
-              <PlaceholderPage
-                title="Usage"
-                detail="Usage analytics are available under Admin Overview and Billing while the dedicated usage page is finalized."
               />
             }
           />

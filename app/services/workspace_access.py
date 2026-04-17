@@ -1,4 +1,4 @@
-"""Workspace visibility for chat/uploads: platform owner, workspace member, or org member (simple RBAC)."""
+"""Workspace visibility for chat/uploads: platform owner, org owner, or assigned workspace member."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Workspace, WorkspaceMember
-from app.services.permissions import is_organization_member
+from app.models import OrganizationMembership, OrgMembershipRole, User, Workspace, WorkspaceMember
 
 
 def resolve_workspace_for_user(db: Session, workspace_id: UUID, user: User) -> Workspace | None:
@@ -15,7 +14,7 @@ def resolve_workspace_for_user(db: Session, workspace_id: UUID, user: User) -> W
     Return the workspace if the user may access it.
 
     - Platform owners: any workspace by id.
-    - Otherwise: workspace member, or any member of the workspace's organization (simple mode UX).
+    - Otherwise: workspace member, or org owner for the workspace's organization.
     """
     if user.is_platform_owner:
         return db.get(Workspace, workspace_id)
@@ -29,6 +28,15 @@ def resolve_workspace_for_user(db: Session, workspace_id: UUID, user: User) -> W
     )
     if in_ws is not None:
         return ws
-    if is_organization_member(db, user.id, ws.organization_id):
+    org_owner_membership = (
+        db.query(OrganizationMembership)
+        .filter(
+            OrganizationMembership.organization_id == ws.organization_id,
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.role == OrgMembershipRole.org_owner.value,
+        )
+        .one_or_none()
+    )
+    if org_owner_membership is not None:
         return ws
     return None

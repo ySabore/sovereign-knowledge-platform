@@ -1,4 +1,5 @@
 import {
+  Fragment,
   type ChangeEvent,
   type CSSProperties,
   type Dispatch,
@@ -10,8 +11,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage } from "../api/client";
+import { fetchPublicConfig } from "../lib/publicConfig";
 import { KnowledgeAnalyticsPanel } from "../components/KnowledgeAnalyticsPanel";
 import { OrgDashboardAnalytics } from "../components/OrgDashboardAnalytics";
 import { PlatformOwnerDashboard } from "../components/PlatformOwnerDashboard";
@@ -30,51 +32,67 @@ import {
   useOrgShellTokens,
 } from "../context/OrgShellThemeContext";
 import { DashboardPage } from "./app/DashboardPage";
+import { OrganizationSelect } from "../features/scope-select/OrganizationSelect";
+import { WorkspaceSelect } from "../features/scope-select/WorkspaceSelect";
+import { OrganizationSettingsPanel } from "../features/organization-settings/OrganizationSettingsPanel";
+import { DocumentsPanel } from "../features/documents/DocumentsPanel";
+import { HomePanelRouter } from "../features/home-shell/HomePanelRouter";
+import { BackNavButton } from "../features/home-shell/BackNavButton";
+import type { Org, OrgChatProvider, OrgScreen, Panel, Workspace } from "../features/home-shell/types";
+import type { AllWorkspacesPanelProps, ChatsPanelProps } from "../features/home-shell/contracts";
+import { useHomeWorkspaceState } from "../features/home-shell/useHomeWorkspaceState";
+import { useOrgKnowledgeGate } from "../features/home-shell/useOrgKnowledgeGate";
+import { getNavLockState, useHomeNavState } from "../features/home-shell/useHomeNavState";
+import { HomeSidebar } from "../features/home-shell/HomeSidebar";
+import { HomeTopBar } from "../features/home-shell/HomeTopBar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Org = {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  description?: string | null;
-  preferred_chat_provider?: string | null;
-  preferred_chat_model?: string | null;
-  openai_api_key_configured?: boolean;
-  anthropic_api_key_configured?: boolean;
-  openai_api_base_url?: string | null;
-  anthropic_api_base_url?: string | null;
-};
+type OrgRetrievalStrategy = "" | "heuristic" | "hybrid" | "rerank";
 
-type OrgChatProvider = "" | "extractive" | "ollama" | "openai" | "anthropic";
+const URL_PANELS: Panel[] = [
+  "platform",
+  "dashboard",
+  "orgs",
+  "workspaces",
+  "chats",
+  "team",
+  "connectors",
+  "docs",
+  "analytics",
+  "billing",
+  "audit",
+  "settings",
+];
+
+function panelFromQuery(value: string | null): Panel | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return (URL_PANELS as string[]).includes(normalized) ? (normalized as Panel) : null;
+}
 
 function orgChatProviderFromApi(v: string | null | undefined): OrgChatProvider {
   if (v === "extractive" || v === "ollama" || v === "openai" || v === "anthropic") return v;
   return "";
 }
-type Workspace = { id: string; organization_id: string; name: string; description: string | null };
+
+function orgRetrievalStrategyFromApi(v: string | null | undefined): OrgRetrievalStrategy {
+  if (v === "heuristic" || v === "hybrid" || v === "rerank") return v;
+  return "";
+}
 type Document = {
   id: string;
   filename: string;
   status: string;
+  ingestion_job_id?: string | null;
+  ingestion_job_status?: string | null;
+  ingestion_job_error?: string | null;
   page_count: number | null;
   chunk_count?: number;
   created_at?: string;
 };
-type Panel =
-  | "platform"
-  | "dashboard"
-  | "orgs"
-  | "workspaces"
-  | "chats"
-  | "team"
-  | "connectors"
-  | "docs"
-  | "analytics"
-  | "billing";
-
-/** Chats and Team stay disabled until at least one PDF is indexed (non–platform owners only). */
-const KNOWLEDGE_GATED_PANELS: Panel[] = ["chats", "team"];
+/** Tier 1 + Tier 2 + Tier 3 — must match `ALLOWED_UPLOAD_EXTENSIONS` in app/services/ingestion.py */
+const DOCUMENT_UPLOAD_ACCEPT =
+  ".pdf,.docx,.txt,.md,.markdown,.html,.htm,.pptx,.xlsx,.xls,.csv,.rtf,.eml,.msg,.epub,.mobi,.png,.jpg,.jpeg,.webp,.tif,.tiff";
 
 const dashNavIcon = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -122,13 +140,14 @@ function Badge({ label, color, bg, border }: { label: string; color: string; bg:
 }
 
 function Btn({
-  children, variant = "primary", onClick, disabled, style,
+  children, variant = "primary", onClick, disabled, style, htmlType = "button",
 }: {
   children: React.ReactNode;
   variant?: "primary" | "ghost" | "danger";
   onClick?: () => void;
   disabled?: boolean;
   style?: React.CSSProperties;
+  htmlType?: "button" | "submit";
 }) {
   const C = useOrgShellTokens();
   const base: React.CSSProperties = {
@@ -142,7 +161,12 @@ function Btn({
     danger: { background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" },
   };
   return (
-    <button type="button" style={{ ...base, ...styles[variant], ...style }} onClick={onClick} disabled={disabled}>
+    <button
+      type={htmlType}
+      style={{ ...base, ...styles[variant], ...style }}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   );
@@ -177,461 +201,43 @@ function Input({
   );
 }
 
-// ─── Nav item ─────────────────────────────────────────────────────────────────
-function NavItem({
-  icon, label, active, badge, badgeVariant = "accent", onClick, disabled, title: titleAttr,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-  badge?: number;
-  badgeVariant?: "accent" | "danger";
-  onClick: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  const C = useOrgShellTokens();
-  const badgeBg = badgeVariant === "danger" ? C.red : C.accent;
-  return (
-    <button
-      type="button"
-      title={titleAttr}
-      disabled={disabled}
-      onClick={disabled ? undefined : onClick}
-      style={{
-        display: "flex", alignItems: "center", gap: 8, padding: "6px 13px",
-        fontSize: 12, fontWeight: 500, color: active ? C.t1 : C.t2,
-        cursor: disabled ? "not-allowed" : "pointer", border: "none", background: active ? "rgba(37,99,235,0.12)" : "transparent",
-        borderRight: active ? `2px solid ${C.accent}` : "2px solid transparent",
-        width: "100%", textAlign: "left", fontFamily: C.sans, transition: "all .12s",
-        opacity: disabled ? 0.45 : 1,
-      }}
-    >
-      <span style={{ opacity: active ? 1 : 0.7, flexShrink: 0 }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
-      {badge != null && (
-        <span style={{
-          fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 100,
-          background: badgeBg, color: "white",
-        }}>
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-}
-
 // ─── Wide org dropdown (with search) ─────────────────────────────────────────
-function WideOrgDropdown({
-  orgs,
-  selectedId,
-  onSelect,
-  allowEmpty,
-  showBackToPlatform,
-  onBackToPlatform,
-}: {
-  orgs: Org[];
-  /** Pass "" to show “Select organization” until the user picks one (allowEmpty). */
-  selectedId: string;
-  onSelect: (id: string) => void;
-  allowEmpty?: boolean;
-  /** Platform owner: return to platform-wide scope (no active org). */
-  showBackToPlatform?: boolean;
-  onBackToPlatform?: () => void;
-}) {
-  const C = useOrgShellTokens();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const selected = selectedId ? orgs.find((o) => o.id === selectedId) : allowEmpty ? undefined : orgs[0];
-
-  const filtered = query.trim()
-    ? orgs.filter((o) =>
-        o.name.toLowerCase().includes(query.toLowerCase()) ||
-        o.slug.toLowerCase().includes(query.toLowerCase()),
-      )
-    : orgs;
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 50);
-    else setQuery("");
-  }, [open]);
-
-  if (!orgs.length) return null;
-  if (!selected && !allowEmpty) return null;
-
-  return (
-    <div ref={ref} style={{ position: "relative", width: "100%" }}>
-      {/* Trigger */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: "100%", display: "flex", alignItems: "center", gap: 12,
-          padding: "13px 16px", background: C.bgCard,
-          border: `1px solid ${open ? "rgba(37,99,235,0.5)" : C.bd2}`,
-          borderRadius: open ? "12px 12px 0 0" : 12,
-          cursor: "pointer", fontFamily: C.sans,
-          boxShadow: open ? `0 0 0 3px rgba(37,99,235,0.1)` : "none",
-          transition: "all .15s",
-        }}
-      >
-        <div style={{
-          width: 38, height: 38, borderRadius: 9, flexShrink: 0,
-          background: selected
-            ? "linear-gradient(135deg,rgba(37,99,235,0.35),rgba(139,92,246,0.35))"
-            : "rgba(148,163,184,0.15)",
-          border: `1px solid ${selected ? "rgba(37,99,235,0.35)" : C.bd}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16, fontWeight: 700, color: selected ? "#93c5fd" : C.t3,
-        }}>
-          {selected ? selected.name.slice(0, 2).toUpperCase() : "?"}
-        </div>
-        <div style={{ flex: 1, textAlign: "left" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 2 }}>
-            {selected ? selected.name : "Select organization…"}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {selected ? (
-              <>
-                <span style={{ fontSize: 10, color: C.t3, fontFamily: C.mono }}>/{selected.slug}</span>
-                <span style={{
-                  display: "inline-flex", alignItems: "center", gap: 3,
-                  padding: "1px 6px", borderRadius: 100, fontSize: 9, fontWeight: 700,
-                  background: selected.status === "active" ? "rgba(16,185,129,0.12)" : "rgba(245,158,11,0.12)",
-                  color: selected.status === "active" ? C.green : C.gold,
-                  border: `1px solid ${selected.status === "active" ? "rgba(16,185,129,0.25)" : "rgba(245,158,11,0.25)"}`,
-                  fontFamily: C.sans,
-                }}>
-                  <span style={{ width: 4, height: 4, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
-                  {selected.status}
-                </span>
-              </>
-            ) : (
-              <span style={{ fontSize: 10, color: C.t3 }}>Choose an org to manage details</span>
-            )}
-          </div>
-        </div>
-        <svg viewBox="0 0 16 16" width="14" height="14" style={{
-          fill: C.t3, flexShrink: 0,
-          transform: open ? "rotate(180deg)" : "rotate(0deg)",
-          transition: "transform .15s",
-        }}>
-          <path d="M8 10.5L2.5 5h11L8 10.5z" />
-        </svg>
-      </button>
-
-      {/* Dropdown */}
-      {open && (
-        <div style={{
-          position: "absolute", left: 0, right: 0, zIndex: 100,
-          background: C.bgCard, border: `1px solid rgba(37,99,235,0.3)`,
-          borderTop: "none", borderRadius: "0 0 12px 12px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-        }}>
-          {/* Search input */}
-          <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.bd}` }}>
-            <div style={{ position: "relative" }}>
-              <svg viewBox="0 0 16 16" width="13" height="13" style={{
-                position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)",
-                fill: "none", stroke: C.t3, strokeWidth: 1.5, strokeLinecap: "round",
-              }}>
-                <circle cx="6.5" cy="6.5" r="4" />
-                <path d="M10 10l3 3" />
-              </svg>
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search organizations…"
-                style={{
-                  width: "100%", padding: "7px 10px 7px 30px",
-                  background: C.bgE, border: `1px solid ${C.bd}`, borderRadius: 7,
-                  fontSize: 12, color: C.t1, fontFamily: C.sans, outline: "none",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-          </div>
-          {showBackToPlatform && onBackToPlatform && (
-            <div style={{ padding: "8px 12px", borderBottom: `1px solid ${C.bd}` }}>
-              <button
-                type="button"
-                onClick={() => {
-                  onBackToPlatform();
-                  setOpen(false);
-                  setQuery("");
-                }}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 12px", borderRadius: 8, border: `1px solid rgba(37,99,235,0.25)`,
-                  background: "rgba(37,99,235,0.08)", cursor: "pointer", fontFamily: C.sans,
-                  textAlign: "left", transition: "background .12s",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "rgba(37,99,235,0.14)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "rgba(37,99,235,0.08)";
-                }}
-              >
-                <span style={{ fontSize: 16, lineHeight: 1 }} aria-hidden>🌐</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>Platform-wide view</div>
-                  <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>Leave org context · overview all organizations</div>
-                </div>
-              </button>
-            </div>
-          )}
-          {/* Results */}
-          <div style={{ maxHeight: 240, overflowY: "auto" }}>
-            {filtered.length === 0 ? (
-              <div style={{ padding: "16px", textAlign: "center", fontSize: 12, color: C.t3 }}>
-                No organizations match "{query}"
-              </div>
-            ) : (
-              filtered.map((org, i) => (
-                <button
-                  key={org.id}
-                  type="button"
-                  onClick={() => { onSelect(org.id); setOpen(false); setQuery(""); }}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10,
-                    padding: "11px 16px",
-                    background: org.id === selectedId ? "rgba(37,99,235,0.1)" : "transparent",
-                    borderBottom: i < filtered.length - 1 ? `1px solid ${C.bd}` : "none",
-                    border: "none", cursor: "pointer", fontFamily: C.sans, transition: "background .1s",
-                  }}
-                  onMouseEnter={(e) => { if (org.id !== selectedId) (e.currentTarget as HTMLButtonElement).style.background = C.rowHover; }}
-                  onMouseLeave={(e) => { if (org.id !== selectedId) (e.currentTarget as HTMLButtonElement).style.background = org.id === selectedId ? "rgba(37,99,235,0.1)" : "transparent"; }}
-                >
-                  <div style={{
-                    width: 30, height: 30, borderRadius: 7, flexShrink: 0,
-                    background: "rgba(37,99,235,0.18)", border: "1px solid rgba(37,99,235,0.25)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, fontWeight: 700, color: "#93c5fd",
-                  }}>
-                    {org.name.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div style={{ fontSize: 12, fontWeight: org.id === selectedId ? 600 : 500, color: C.t1 }}>
-                      {org.name}
-                    </div>
-                    <div style={{ fontSize: 10, color: C.t3, fontFamily: C.mono }}>/{org.slug}</div>
-                  </div>
-                  {org.id === selectedId && (
-                    <svg viewBox="0 0 16 16" width="12" height="12" style={{ fill: "none", flexShrink: 0 }}>
-                      <path d="M3 8l3.5 3.5 6.5-7" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Wide workspace dropdown (with search) ────────────────────────────────────
-function WideWorkspaceDropdown({
-  workspaces, orgs, selectedId, onSelect,
-}: {
-  workspaces: Workspace[];
-  orgs: Org[];
-  selectedId: string;
-  onSelect: (id: string) => void;
-}) {
-  const C = useOrgShellTokens();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const selected = workspaces.find((w) => w.id === selectedId) ?? workspaces[0];
-
-  const filtered = query.trim()
-    ? workspaces.filter((w) => {
-        const org = orgs.find((o) => o.id === w.organization_id);
-        const q = query.toLowerCase();
-        return (
-          w.name.toLowerCase().includes(q) ||
-          (w.description ?? "").toLowerCase().includes(q) ||
-          (org?.name ?? "").toLowerCase().includes(q)
-        );
-      })
-    : workspaces;
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 50);
-    else setQuery("");
-  }, [open]);
-
-  if (!selected) return null;
-
-  const selOrg = orgs.find((o) => o.id === selected.organization_id);
-
-  return (
-    <div ref={ref} style={{ position: "relative", width: "100%" }}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: "100%", display: "flex", alignItems: "center", gap: 12,
-          padding: "13px 16px", background: C.bgCard,
-          border: `1px solid ${open ? "rgba(37,99,235,0.5)" : C.bd2}`,
-          borderRadius: open ? "12px 12px 0 0" : 12,
-          cursor: "pointer", fontFamily: C.sans,
-          boxShadow: open ? `0 0 0 3px rgba(37,99,235,0.1)` : "none",
-          transition: "all .15s",
-        }}
-      >
-        <div style={{
-          width: 38, height: 38, borderRadius: 9, flexShrink: 0,
-          background: "linear-gradient(135deg,rgba(37,99,235,0.35),rgba(139,92,246,0.35))",
-          border: "1px solid rgba(37,99,235,0.35)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 14, fontWeight: 700, color: "#93c5fd",
-        }}>
-          {selected.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
-        </div>
-        <div style={{ flex: 1, textAlign: "left" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 2 }}>
-            {selected.name}
-          </div>
-          <div style={{ fontSize: 10, color: C.t3, fontFamily: C.mono }}>
-            {selOrg?.name ?? "Organization"} · {selected.id.slice(0, 8)}…
-          </div>
-        </div>
-        <svg viewBox="0 0 16 16" width="14" height="14" style={{
-          fill: C.t3, flexShrink: 0,
-          transform: open ? "rotate(180deg)" : "rotate(0deg)",
-          transition: "transform .15s",
-        }}>
-          <path d="M8 10.5L2.5 5h11L8 10.5z" />
-        </svg>
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute", left: 0, right: 0, zIndex: 100,
-          background: C.bgCard, border: `1px solid rgba(37,99,235,0.3)`,
-          borderTop: "none", borderRadius: "0 0 12px 12px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-        }}>
-          <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.bd}` }}>
-            <div style={{ position: "relative" }}>
-              <svg viewBox="0 0 16 16" width="13" height="13" style={{
-                position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)",
-                fill: "none", stroke: C.t3, strokeWidth: 1.5, strokeLinecap: "round",
-              }}>
-                <circle cx="6.5" cy="6.5" r="4" />
-                <path d="M10 10l3 3" />
-              </svg>
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search workspaces…"
-                style={{
-                  width: "100%", padding: "7px 10px 7px 30px",
-                  background: C.bgE, border: `1px solid ${C.bd}`, borderRadius: 7,
-                  fontSize: 12, color: C.t1, fontFamily: C.sans, outline: "none",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-          </div>
-          <div style={{ maxHeight: 260, overflowY: "auto" }}>
-            {filtered.length === 0 ? (
-              <div style={{ padding: "16px", textAlign: "center", fontSize: 12, color: C.t3 }}>
-                No workspaces match "{query}"
-              </div>
-            ) : (
-              filtered.map((ws, i) => {
-                const org = orgs.find((o) => o.id === ws.organization_id);
-                return (
-                  <button
-                    key={ws.id}
-                    type="button"
-                    onClick={() => { onSelect(ws.id); setOpen(false); setQuery(""); }}
-                    style={{
-                      width: "100%", display: "flex", alignItems: "center", gap: 10,
-                      padding: "11px 16px",
-                      background: ws.id === selectedId ? "rgba(37,99,235,0.1)" : "transparent",
-                      borderBottom: i < filtered.length - 1 ? `1px solid ${C.bd}` : "none",
-                      border: "none", cursor: "pointer", fontFamily: C.sans, transition: "background .1s",
-                    }}
-                    onMouseEnter={(e) => { if (ws.id !== selectedId) (e.currentTarget as HTMLButtonElement).style.background = C.rowHover; }}
-                    onMouseLeave={(e) => { if (ws.id !== selectedId) (e.currentTarget as HTMLButtonElement).style.background = ws.id === selectedId ? "rgba(37,99,235,0.1)" : "transparent"; }}
-                  >
-                    <div style={{
-                      width: 30, height: 30, borderRadius: 7, flexShrink: 0,
-                      background: "rgba(37,99,235,0.18)", border: "1px solid rgba(37,99,235,0.25)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 10, fontWeight: 700, color: "#93c5fd",
-                    }}>
-                      {ws.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                    <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: ws.id === selectedId ? 600 : 500, color: C.t1 }}>
-                        {ws.name}
-                      </div>
-                      <div style={{ fontSize: 10, color: C.t3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {org?.name ?? "—"}
-                      </div>
-                    </div>
-                    {ws.id === selectedId && (
-                      <svg viewBox="0 0 16 16" width="12" height="12" style={{ fill: "none", flexShrink: 0 }}>
-                        <path d="M3 8l3.5 3.5 6.5-7" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// ─── Org detail — stats tile ───────────────────────────────────────────────────
 
 // ─── Org detail — stats tile ───────────────────────────────────────────────────
 function StatTile({
-  icon, label, value, sub, color,
+  icon, label, value, sub, color, onClick, title,
 }: {
-  icon: string; label: string; value: string | number; sub?: string; color?: string;
+  icon: string;
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: string;
+  /** When set, tile is keyboard-focusable and opens the matching left-nav section. */
+  onClick?: () => void;
+  title?: string;
 }) {
   const C = useOrgShellTokens();
-  return (
-    <div style={{
-      background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 12,
-      padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6,
-    }}>
+  const [hover, setHover] = useState(false);
+  const interactive = Boolean(onClick);
+  const shell: React.CSSProperties = {
+    background: C.bgCard,
+    border: `1px solid ${interactive && hover ? "rgba(37,99,235,0.45)" : C.bd}`,
+    borderRadius: 12,
+    padding: "16px 18px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    transition: "border-color .15s ease, box-shadow .15s ease",
+    boxShadow: interactive && hover ? "0 0 0 1px rgba(37,99,235,0.12)" : "none",
+    cursor: interactive ? "pointer" : "default",
+    width: "100%",
+    textAlign: "left" as const,
+    font: "inherit",
+    color: "inherit",
+  } satisfies CSSProperties;
+  const inner = (
+    <>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <span style={{ fontSize: 16 }}>{icon}</span>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3 }}>
@@ -642,480 +248,25 @@ function StatTile({
         {value}
       </div>
       {sub && <div style={{ fontSize: 10, color: C.t3 }}>{sub}</div>}
-    </div>
+    </>
   );
-}
-
-type OrgScreen = "overview" | "settings";
-
-function OrgSettingsCollapsible({
-  title,
-  subtitle,
-  defaultOpen = true,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const C = useOrgShellTokens();
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div
-      style={{
-        background: C.bgCard,
-        border: `1px solid ${C.bd}`,
-        borderRadius: 14,
-        overflow: "hidden",
-        marginBottom: 10,
-      }}
-    >
+  if (interactive) {
+    return (
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "14px 18px",
-          background: open ? "rgba(37,99,235,0.06)" : "transparent",
-          border: "none",
-          cursor: "pointer",
-          fontFamily: C.sans,
-          textAlign: "left",
-        }}
+        onClick={onClick}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={shell}
+        title={title}
       >
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.t1 }}>{title}</div>
-          {subtitle ? <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{subtitle}</div> : null}
-        </div>
-        <span style={{ fontSize: 11, color: C.t2, flexShrink: 0 }}>{open ? "Hide" : "Show"}</span>
+        {inner}
       </button>
-      {open ? (
-        <div style={{ padding: "8px 18px 18px", borderTop: `1px solid ${C.bd}` }}>{children}</div>
-      ) : null}
-    </div>
-  );
-}
-
-function OrganizationSettingsPanel({
-  org,
-  onSaved,
-  showDangerZone,
-  onOrgDeleted,
-  isPlatformOwner,
-}: {
-  org: Org;
-  onSaved: (org: Org) => void;
-  showDangerZone?: boolean;
-  onOrgDeleted?: () => void | Promise<void>;
-  isPlatformOwner?: boolean;
-}) {
-  const C = useOrgShellTokens();
-  const [name, setName] = useState(org.name);
-  const [status, setStatus] = useState(org.status);
-  const [description, setDescription] = useState(org.description ?? "");
-  const [chatProv, setChatProv] = useState<OrgChatProvider>(orgChatProviderFromApi(org.preferred_chat_provider));
-  const [chatModel, setChatModel] = useState(org.preferred_chat_model ?? "");
-  const [openaiKeyDraft, setOpenaiKeyDraft] = useState("");
-  const [anthropicKeyDraft, setAnthropicKeyDraft] = useState("");
-  const [openaiBaseUrl, setOpenaiBaseUrl] = useState(org.openai_api_base_url ?? "");
-  const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(org.anthropic_api_base_url ?? "");
-  const [clearOpenaiKey, setClearOpenaiKey] = useState(false);
-  const [clearAnthropicKey, setClearAnthropicKey] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-  const [delSlug, setDelSlug] = useState("");
-  const [delBusy, setDelBusy] = useState(false);
-  const [delErr, setDelErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    setName(org.name);
-    setStatus(org.status);
-    setDescription(org.description ?? "");
-    setChatProv(orgChatProviderFromApi(org.preferred_chat_provider));
-    setChatModel(org.preferred_chat_model ?? "");
-    setOpenaiBaseUrl(org.openai_api_base_url ?? "");
-    setAnthropicBaseUrl(org.anthropic_api_base_url ?? "");
-    setOpenaiKeyDraft("");
-    setAnthropicKeyDraft("");
-    setClearOpenaiKey(false);
-    setClearAnthropicKey(false);
-    setErr(null);
-    setOk(null);
-    setDelSlug("");
-    setDelErr(null);
-  }, [
-    org.id,
-    org.name,
-    org.status,
-    org.description,
-    org.preferred_chat_provider,
-    org.preferred_chat_model,
-    org.openai_api_base_url,
-    org.anthropic_api_base_url,
-    org.openai_api_key_configured,
-    org.anthropic_api_key_configured,
-  ]);
-
-  const selectStyle: CSSProperties = {
-    width: "100%",
-    background: C.bgE,
-    border: `1px solid ${C.bd}`,
-    borderRadius: 8,
-    padding: "7px 10px",
-    fontSize: 12,
-    color: C.t1,
-    fontFamily: C.sans,
-    outline: "none",
-    boxSizing: "border-box",
-  };
-
-  function resetForm() {
-    setName(org.name);
-    setStatus(org.status);
-    setDescription(org.description ?? "");
-    setChatProv(orgChatProviderFromApi(org.preferred_chat_provider));
-    setChatModel(org.preferred_chat_model ?? "");
-    setOpenaiBaseUrl(org.openai_api_base_url ?? "");
-    setAnthropicBaseUrl(org.anthropic_api_base_url ?? "");
-    setOpenaiKeyDraft("");
-    setAnthropicKeyDraft("");
-    setClearOpenaiKey(false);
-    setClearAnthropicKey(false);
-    setErr(null);
-    setOk(null);
+    );
   }
-
-  async function save() {
-    setSaving(true);
-    setErr(null);
-    setOk(null);
-    try {
-      const patch: Record<string, unknown> = {
-        name: name.trim(),
-        status: status.trim().toLowerCase(),
-        description: description.trim() || null,
-        preferred_chat_provider: chatProv === "" ? null : chatProv,
-        preferred_chat_model: chatModel.trim() || null,
-      };
-      if (isPlatformOwner) {
-        if (clearOpenaiKey) patch.openai_api_key = null;
-        else if (openaiKeyDraft.trim()) patch.openai_api_key = openaiKeyDraft.trim();
-        if (clearAnthropicKey) patch.anthropic_api_key = null;
-        else if (anthropicKeyDraft.trim()) patch.anthropic_api_key = anthropicKeyDraft.trim();
-        patch.openai_api_base_url = openaiBaseUrl.trim() || null;
-        patch.anthropic_api_base_url = anthropicBaseUrl.trim() || null;
-      }
-
-      const { data } = await api.patch<Org>(`/organizations/${org.id}`, patch);
-      onSaved({ ...org, ...data });
-      setOpenaiKeyDraft("");
-      setAnthropicKeyDraft("");
-      setClearOpenaiKey(false);
-      setClearAnthropicKey(false);
-      setOk("Saved.");
-    } catch (ex) {
-      setErr(apiErrorMessage(ex));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <div style={{ fontFamily: C.serif, fontSize: 20, color: C.t1, marginBottom: 4 }}>Organization settings</div>
-        <div style={{ fontSize: 12, color: C.t2 }}>
-          Profile, description, and optional chat model overrides for this organization.
-        </div>
-      </div>
-
-      <OrgSettingsCollapsible title="Profile" subtitle="Name, status, and URL slug" defaultOpen>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-              Name
-            </div>
-            <Input value={name} onChange={setName} placeholder="Organization name" />
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-              Status
-            </div>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-              Slug
-            </div>
-            <div style={{ fontSize: 12, color: C.t2, fontFamily: C.mono }}>/{org.slug}</div>
-            <div style={{ fontSize: 10, color: C.t3, marginTop: 4 }}>Slug is read-only. Contact support to change it.</div>
-          </div>
-        </div>
-      </OrgSettingsCollapsible>
-
-      <OrgSettingsCollapsible
-        title="About this organization"
-        subtitle="Mission, context, and who this org serves"
-        defaultOpen={false}
-      >
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-            Description
-          </div>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Describe the organization's purpose, teams, and how you use the knowledge base."
-            rows={5}
-            style={{
-              width: "100%",
-              background: C.bgE,
-              border: `1px solid ${C.bd}`,
-              borderRadius: 8,
-              padding: "10px 12px",
-              fontSize: 12,
-              color: C.t1,
-              fontFamily: C.sans,
-              resize: "vertical",
-              outline: "none",
-              boxSizing: "border-box",
-              lineHeight: 1.6,
-            }}
-          />
-        </div>
-      </OrgSettingsCollapsible>
-
-      <OrgSettingsCollapsible
-        title="Chat & LLM"
-        subtitle="Override platform defaults for grounded answers in this org"
-        defaultOpen={false}
-      >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-              Answer provider
-            </div>
-            <select
-              value={chatProv}
-              onChange={(e) => setChatProv(e.target.value as OrgChatProvider)}
-              style={selectStyle}
-            >
-              <option value="">Use platform default</option>
-              <option value="extractive">Extractive (quotes only, no LLM)</option>
-              <option value="ollama">Ollama (local LLM)</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
-              Chat model override
-            </div>
-            <Input
-              value={chatModel}
-              onChange={setChatModel}
-              placeholder={
-                chatProv === "openai"
-                  ? "e.g. gpt-4o-mini"
-                  : chatProv === "anthropic"
-                    ? "e.g. claude-3-5-haiku-20241022"
-                    : "e.g. llama3.2, qwen3:32b"
-              }
-              disabled={chatProv === "extractive"}
-            />
-            <div style={{ fontSize: 10, color: C.t3, marginTop: 6, lineHeight: 1.45 }}>
-              When the effective provider is Ollama, OpenAI, or Anthropic, this overrides the platform default model for that
-              provider if set. Leave empty to use the server default (
-              <span style={{ fontFamily: C.mono }}>ANSWER_GENERATION_MODEL</span>,{" "}
-              <span style={{ fontFamily: C.mono }}>OPENAI_DEFAULT_CHAT_MODEL</span>, or{" "}
-              <span style={{ fontFamily: C.mono }}>ANTHROPIC_DEFAULT_CHAT_MODEL</span>).
-            </div>
-          </div>
-          {!isPlatformOwner ? (
-            <div
-              style={{
-                fontSize: 11,
-                color: C.t2,
-                lineHeight: 1.55,
-                padding: "12px 14px",
-                borderRadius: 10,
-                background: "rgba(139,92,246,0.06)",
-                border: "1px solid rgba(139,92,246,0.2)",
-              }}
-            >
-              <strong style={{ color: C.t1 }}>Cloud LLM keys</strong> for OpenAI and Anthropic are configured by the platform
-              owner (encrypted at rest). You can still select those providers here if keys or platform fallbacks are available.
-            </div>
-          ) : null}
-        </div>
-      </OrgSettingsCollapsible>
-
-      {isPlatformOwner ? (
-        <OrgSettingsCollapsible
-          title="Cloud LLM credentials"
-          subtitle="Platform owner only — per-organization API keys and optional API bases"
-          defaultOpen={false}
-        >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
-            <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.55 }}>
-              Store keys only when <span style={{ fontFamily: C.mono }}>ORG_LLM_FERNET_KEY</span> is set on the API. Keys are
-              write-only; leave the password fields blank to keep the current stored key. Use "Remove stored key" to clear.
-            </div>
-
-            <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 12 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 8 }}>
-                OpenAI
-              </div>
-              <div style={{ fontSize: 11, color: C.t2, marginBottom: 8 }}>
-                Key status:{" "}
-                <strong style={{ color: C.t1 }}>
-                  {clearOpenaiKey ? "will clear on save" : org.openai_api_key_configured ? "stored" : "none"}
-                </strong>
-              </div>
-              <Input
-                type="password"
-                value={openaiKeyDraft}
-                onChange={(v) => {
-                  setOpenaiKeyDraft(v);
-                  if (v.trim()) setClearOpenaiKey(false);
-                }}
-                placeholder="New API key (optional)"
-              />
-              <div style={{ marginTop: 8 }}>
-                <Btn
-                  variant="ghost"
-                  disabled={saving || !org.openai_api_key_configured}
-                  onClick={() => {
-                    setClearOpenaiKey(true);
-                    setOpenaiKeyDraft("");
-                  }}
-                >
-                  Remove stored OpenAI key
-                </Btn>
-              </div>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, margin: "12px 0 6px" }}>
-                OpenAI API base URL
-              </div>
-              <Input
-                value={openaiBaseUrl}
-                onChange={setOpenaiBaseUrl}
-                placeholder="https://api.openai.com/v1 (optional override)"
-              />
-            </div>
-
-            <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 12 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 8 }}>
-                Anthropic
-              </div>
-              <div style={{ fontSize: 11, color: C.t2, marginBottom: 8 }}>
-                Key status:{" "}
-                <strong style={{ color: C.t1 }}>
-                  {clearAnthropicKey ? "will clear on save" : org.anthropic_api_key_configured ? "stored" : "none"}
-                </strong>
-              </div>
-              <Input
-                type="password"
-                value={anthropicKeyDraft}
-                onChange={(v) => {
-                  setAnthropicKeyDraft(v);
-                  if (v.trim()) setClearAnthropicKey(false);
-                }}
-                placeholder="New API key (optional)"
-              />
-              <div style={{ marginTop: 8 }}>
-                <Btn
-                  variant="ghost"
-                  disabled={saving || !org.anthropic_api_key_configured}
-                  onClick={() => {
-                    setClearAnthropicKey(true);
-                    setAnthropicKeyDraft("");
-                  }}
-                >
-                  Remove stored Anthropic key
-                </Btn>
-              </div>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, margin: "12px 0 6px" }}>
-                Anthropic API base URL
-              </div>
-              <Input
-                value={anthropicBaseUrl}
-                onChange={setAnthropicBaseUrl}
-                placeholder="https://api.anthropic.com (optional override)"
-              />
-            </div>
-          </div>
-        </OrgSettingsCollapsible>
-      ) : null}
-
-      <div style={{ marginTop: 4 }}>
-        {err ? <div style={{ fontSize: 11, color: C.red, marginBottom: 8 }}>✗ {err}</div> : null}
-        {ok ? <div style={{ fontSize: 11, color: C.green, marginBottom: 8 }}>✓ {ok}</div> : null}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Btn variant="ghost" disabled={saving} onClick={resetForm}>
-            Reset
-          </Btn>
-          <Btn variant="primary" disabled={saving || !name.trim()} onClick={save}>
-            {saving ? "Saving…" : "Save changes"}
-          </Btn>
-        </div>
-      </div>
-
-      {showDangerZone && onOrgDeleted && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: "16px 18px",
-            background: "rgba(239,68,68,0.06)",
-            border: "1px solid rgba(239,68,68,0.28)",
-            borderRadius: 14,
-          }}
-        >
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.red, marginBottom: 8 }}>
-            Danger zone
-          </div>
-          <div style={{ fontSize: 12, color: C.t2, lineHeight: 1.55, marginBottom: 12 }}>
-            Delete this organization and all workspaces, indexed documents, chat history, and connectors. This cannot be undone.
-          </div>
-          <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 6 }}>
-            Type slug <span style={{ fontFamily: C.mono, color: C.t1 }}>{org.slug}</span> to confirm
-          </div>
-          <Input value={delSlug} onChange={setDelSlug} placeholder={org.slug} style={{ maxWidth: 320, marginBottom: 10 }} />
-          {delErr && <div style={{ fontSize: 11, color: C.red, marginBottom: 8 }}>{delErr}</div>}
-          <Btn
-            variant="ghost"
-            disabled={delBusy}
-            style={{ borderColor: "rgba(239,68,68,0.45)", color: C.red }}
-            onClick={async () => {
-              setDelErr(null);
-              if (delSlug.trim().toLowerCase() !== org.slug.toLowerCase()) {
-                setDelErr("Slug must match exactly.");
-                return;
-              }
-              setDelBusy(true);
-              try {
-                await api.delete(`/organizations/${org.id}`, { params: { confirm_slug: delSlug.trim() } });
-                setDelSlug("");
-                await onOrgDeleted();
-              } catch (e) {
-                setDelErr(apiErrorMessage(e));
-              } finally {
-                setDelBusy(false);
-              }
-            }}
-          >
-            {delBusy ? "Deleting…" : "Delete organization"}
-          </Btn>
-        </div>
-      )}
+    <div style={shell}>
+      {inner}
     </div>
   );
 }
@@ -1129,6 +280,10 @@ function OrgDetailView({
   onWorkspaceCreated,
   onGoToWorkspace,
   onOpenSettings,
+  onNavigateToWorkspaces,
+  onNavigateToTeam,
+  onNavigateToDocuments,
+  onNavigateToConnectors,
 }: {
   org: Org;
   workspaces: Workspace[];
@@ -1137,8 +292,42 @@ function OrgDetailView({
   onWorkspaceCreated: (wsId?: string) => void;
   onGoToWorkspace: (wsId?: string) => void;
   onOpenSettings: () => void;
+  onNavigateToWorkspaces: () => void;
+  onNavigateToTeam: () => void;
+  onNavigateToDocuments: () => void;
+  onNavigateToConnectors: () => void;
 }) {
   const C = useOrgShellTokens();
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [documentCount, setDocumentCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOverviewLoading(true);
+    setMemberCount(null);
+    setDocumentCount(null);
+    void api
+      .get<{ member_count: number; document_count: number }>(`/organizations/${org.id}/overview-stats`)
+      .then(({ data }) => {
+        if (!cancelled) {
+          setMemberCount(data.member_count);
+          setDocumentCount(data.document_count);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMemberCount(null);
+          setDocumentCount(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOverviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [org.id]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
@@ -1198,10 +387,41 @@ function OrgDetailView({
           Overview
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-          <StatTile icon="⬡" label="Workspaces" value={loadingWs ? "…" : workspaces.length} sub="Active environments" color={C.accent} />
-          <StatTile icon="👥" label="Members" value="—" sub="Seats provisioned" />
-          <StatTile icon="📄" label="Documents" value="—" sub="Indexed & retrievable" color={C.purple} />
-          <StatTile icon="🔌" label="Connectors" value={CONNECTORS.length} sub="Available integrations" color={C.green} />
+          <StatTile
+            icon="⬡"
+            label="Workspaces"
+            value={loadingWs ? "…" : workspaces.length}
+            sub="Active environments"
+            color={C.accent}
+            onClick={onNavigateToWorkspaces}
+            title="Open Workspaces in the left menu"
+          />
+          <StatTile
+            icon="👥"
+            label="Members"
+            value={overviewLoading ? "…" : memberCount ?? "—"}
+            sub="Organization roster"
+            onClick={onNavigateToTeam}
+            title="Open Team in the left menu"
+          />
+          <StatTile
+            icon="📄"
+            label="Documents"
+            value={overviewLoading ? "…" : documentCount ?? "—"}
+            sub="Indexed in this org"
+            color={C.purple}
+            onClick={onNavigateToDocuments}
+            title="Open Documents in the left menu"
+          />
+          <StatTile
+            icon="🔌"
+            label="Connectors"
+            value={CONNECTORS.length}
+            sub="Available integrations"
+            color={C.green}
+            onClick={onNavigateToConnectors}
+            title="Open Connectors in the left menu"
+          />
         </div>
       </div>
 
@@ -1459,7 +679,7 @@ function WorkspaceOverviewFileUploadCard({ workspace }: { workspace: Workspace }
         <div style={{ fontSize: 22, marginBottom: 8 }}>📁</div>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.t1, marginBottom: 4 }}>Upload File</div>
         <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.45, marginBottom: 10 }}>
-          Manually upload PDFs; files are chunked and indexed for retrieval.
+          Manually upload documents (PDF, Office, text, Markdown, HTML, slides, spreadsheets, CSV, RTF); chunked and indexed.
         </div>
         <span style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>
           {uploading ? "Indexing…" : "Upload File ↑"}
@@ -1468,7 +688,7 @@ function WorkspaceOverviewFileUploadCard({ workspace }: { workspace: Workspace }
       <input
         ref={fileRef}
         type="file"
-        accept="application/pdf"
+        accept={DOCUMENT_UPLOAD_ACCEPT}
         style={{ display: "none" }}
         onChange={handleUpload}
         disabled={uploading}
@@ -1496,19 +716,7 @@ function AllWorkspacesPanel({
   onNavigateToConnectors,
   isPlatformOwner,
   onWorkspaceDeleted,
-}: {
-  orgs: Org[];
-  allWorkspaces: Workspace[];
-  loadingWs: boolean;
-  initialWsId?: string;
-  onLaunchChat: (workspaceId: string) => void;
-  onWorkspaceUpdated: (ws: Workspace) => void;
-  onSelectedWorkspaceChange?: (id: string | null, name: string | null) => void;
-  onNavigateToTeam?: () => void;
-  onNavigateToConnectors?: () => void;
-  isPlatformOwner?: boolean;
-  onWorkspaceDeleted?: () => void | Promise<void>;
-}) {
+}: AllWorkspacesPanelProps) {
   const C = useOrgShellTokens();
   const [selectedWsId, setSelectedWsId] = useState<string>(initialWsId ?? "");
   const [screen, setScreen] = useState<WsScreen>("overview");
@@ -1591,17 +799,9 @@ function AllWorkspacesPanel({
 
       {/* Breadcrumb when sub-screen */}
       {screen !== "overview" && (
-        <button
-          type="button"
-          onClick={backToOverview}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 16,
-            background: "none", border: "none", cursor: "pointer",
-            fontSize: 12, color: C.accent, fontFamily: C.sans,
-          }}
-        >
+        <BackNavButton onClick={backToOverview}>
           ← Back to workspace
-        </button>
+        </BackNavButton>
       )}
 
       {screen === "overview" && (
@@ -1620,7 +820,7 @@ function AllWorkspacesPanel({
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: C.t3, marginBottom: 10 }}>
               Select Workspace
             </div>
-            <WideWorkspaceDropdown
+            <WorkspaceSelect
               workspaces={allWorkspaces}
               orgs={orgs}
               selectedId={selectedWsId}
@@ -1780,11 +980,7 @@ function AllWorkspacesPanel({
 // ─── Chats panel ─────────────────────────────────────────────────────────────
 function ChatsPanel({
   allWorkspaces, initialWsId, onOpenChat,
-}: {
-  allWorkspaces: Workspace[];
-  initialWsId?: string;
-  onOpenChat: (workspaceId: string) => void;
-}) {
+}: ChatsPanelProps) {
   const C = useOrgShellTokens();
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -2256,285 +1452,7 @@ function ConnectorsPanel({
   );
 }
 
-// ─── Documents panel ──────────────────────────────────────────────────────────
-function DocumentsPanel({ orgs, scopeOrganizationId }: { orgs: Org[]; scopeOrganizationId?: string | null }) {
-  const C = useOrgShellTokens();
-  const [allWorkspaces, setAllWorkspaces] = useState<(Workspace & { orgName: string })[]>([]);
-  const [selectedWsId, setSelectedWsId] = useState<string>("");
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [loadingDocs, setLoadingDocs] = useState(false);
-  const [removingId, setRemovingId] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadErr, setUploadErr] = useState<string | null>(null);
-  const [uploadOk, setUploadOk] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  // Collect workspaces (all orgs, or single org when platform owner has scoped context)
-  useEffect(() => {
-    if (!orgs.length) return;
-    const orgList = scopeOrganizationId
-      ? orgs.filter((o) => o.id === scopeOrganizationId)
-      : orgs;
-    if (!orgList.length) {
-      setAllWorkspaces([]);
-      setSelectedWsId("");
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const collected: (Workspace & { orgName: string })[] = [];
-      for (const o of orgList) {
-        try {
-          const { data } = await api.get<Workspace[]>(`/workspaces/org/${o.id}`);
-          data.forEach((ws) => collected.push({ ...ws, orgName: o.name }));
-        } catch {
-          /* ignore */
-        }
-      }
-      if (cancelled) return;
-      setAllWorkspaces(collected);
-      setSelectedWsId((prev) => {
-        if (collected.some((w) => w.id === prev)) return prev;
-        return collected[0]?.id ?? "";
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [orgs, scopeOrganizationId]);
-
-  // Fetch documents when workspace selected
-  useEffect(() => {
-    if (!selectedWsId) return;
-    setLoadingDocs(true);
-    setDocuments([]);
-    api.get<Document[]>(`/documents/workspaces/${selectedWsId}`)
-      .then(({ data }) => setDocuments(data))
-      .catch(() => setDocuments([]))
-      .finally(() => setLoadingDocs(false));
-  }, [selectedWsId]);
-
-  async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !selectedWsId) return;
-    setUploading(true);
-    setUploadErr(null);
-    setUploadOk(null);
-    try {
-      const body = new FormData();
-      body.append("file", file);
-      const { data } = await api.post<{ filename: string; chunk_count: number }>(
-        `/documents/workspaces/${selectedWsId}/upload`, body,
-      );
-      setUploadOk(`"${data.filename}" indexed — ${data.chunk_count} chunks created.`);
-      // Refresh doc list
-      const { data: docs } = await api.get<Document[]>(`/documents/workspaces/${selectedWsId}`);
-      setDocuments(docs);
-    } catch (ex) {
-      setUploadErr(apiErrorMessage(ex));
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }
-
-  if (scopeOrganizationId && !orgs.some((o) => o.id === scopeOrganizationId)) {
-    return (
-      <div style={{ padding: "18px 22px" }}>
-        <div style={{ fontSize: 13, color: C.t2 }}>Select an organization from the context bar to manage documents for that org.</div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ padding: "18px 22px" }}>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontFamily: C.serif, fontSize: 22, color: C.t1, marginBottom: 4 }}>
-          Document Library
-        </div>
-        <div style={{ fontSize: 12, color: C.t2 }}>
-          Upload PDFs to any workspace to index them for grounded AI retrieval.
-        </div>
-      </div>
-
-      {/* Workspace selector */}
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, color: C.t3, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-          Workspace
-        </span>
-        <select
-          value={selectedWsId}
-          onChange={(e) => setSelectedWsId(e.target.value)}
-          style={{
-            background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 7,
-            padding: "6px 10px", fontSize: 12, color: C.t1, fontFamily: C.sans, outline: "none",
-          }}
-        >
-          {allWorkspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>{ws.orgName} / {ws.name}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Upload zone */}
-      <div style={{
-        background: C.bgCard, border: `2px dashed ${C.bd2}`, borderRadius: 12,
-        padding: "28px 24px", textAlign: "center", marginBottom: 20,
-        cursor: "pointer", transition: "border-color .2s",
-      }}
-        onClick={() => fileRef.current?.click()}
-      >
-        <div style={{ fontSize: 30, marginBottom: 8 }}>📄</div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.t1, marginBottom: 4 }}>
-          {uploading ? "Uploading & indexing…" : "Click to upload a PDF"}
-        </div>
-        <div style={{ fontSize: 11, color: C.t3 }}>
-          PDFs are parsed, chunked, embedded and indexed automatically
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/pdf"
-          style={{ display: "none" }}
-          onChange={handleUpload}
-          disabled={uploading || !selectedWsId}
-        />
-        {uploading && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{
-              height: 3, background: C.bgE, borderRadius: 100, overflow: "hidden", maxWidth: 280, margin: "0 auto",
-            }}>
-              <div style={{
-                height: "100%", background: C.accent, borderRadius: 100,
-                width: "60%", animation: "progress 1.5s ease-in-out infinite",
-              }} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {uploadErr && (
-        <div style={{
-          padding: "10px 14px", background: "rgba(239,68,68,0.08)",
-          border: "1px solid rgba(239,68,68,0.25)", borderRadius: 8,
-          fontSize: 12, color: "#f87171", marginBottom: 14,
-        }}>
-          ✗ {uploadErr}
-        </div>
-      )}
-      {uploadOk && (
-        <div style={{
-          padding: "10px 14px", background: "rgba(16,185,129,0.08)",
-          border: "1px solid rgba(16,185,129,0.25)", borderRadius: 8,
-          fontSize: 12, color: "#34d399", marginBottom: 14,
-        }}>
-          ✓ {uploadOk}
-        </div>
-      )}
-
-      {/* Document table */}
-      <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 12, overflow: "hidden" }}>
-        <div style={{
-          padding: "11px 15px", borderBottom: `1px solid ${C.bd}`,
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: C.t1 }}>
-            Indexed documents {documents.length > 0 && `· ${documents.length}`}
-          </span>
-          {loadingDocs && <span style={{ fontSize: 10, color: C.t3 }}>Loading…</span>}
-        </div>
-        {documents.length === 0 && !loadingDocs ? (
-          <div style={{ padding: "24px 16px", textAlign: "center", fontSize: 12, color: C.t3 }}>
-            No documents indexed yet. Upload a PDF above to get started.
-          </div>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {["Document", "Status", "Pages", "Chunks", "Indexed", ""].map((h) => (
-                  <th key={h} style={{
-                    textAlign: "left", fontSize: 9, fontWeight: 700,
-                    letterSpacing: "0.1em", textTransform: "uppercase",
-                    color: C.t3, padding: "7px 12px",
-                    background: "rgba(255,255,255,0.02)", borderBottom: `1px solid ${C.bd}`,
-                  }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id} style={{ borderBottom: `1px solid rgba(255,255,255,0.04)` }}>
-                  <td style={{ padding: "9px 12px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{
-                        width: 26, height: 26, borderRadius: 5, background: "rgba(37,99,235,0.12)",
-                        border: `1px solid rgba(37,99,235,0.2)`, display: "flex",
-                        alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0,
-                      }}>
-                        📄
-                      </div>
-                      <span style={{ fontSize: 12, fontWeight: 500, color: C.t1 }}>{doc.filename}</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: "9px 12px" }}>
-                    {doc.status === "indexed"
-                      ? <Badge label="● Indexed" color={C.green} bg="rgba(16,185,129,0.12)" border="rgba(16,185,129,0.25)" />
-                      : doc.status === "pending"
-                        ? <Badge label="⟳ Processing" color={C.gold} bg="rgba(245,158,11,0.12)" border="rgba(245,158,11,0.25)" />
-                        : <Badge label={doc.status} color={C.t2} bg="rgba(148,163,184,0.08)" border={C.bd} />}
-                  </td>
-                  <td style={{ padding: "9px 12px", fontSize: 11, color: C.t2, fontFamily: C.mono }}>
-                    {doc.page_count ?? "—"}
-                  </td>
-                  <td style={{ padding: "9px 12px", fontSize: 11, color: C.t2, fontFamily: C.mono }}>
-                    {doc.chunk_count ?? "—"}
-                  </td>
-                  <td style={{ padding: "9px 12px", fontSize: 11, color: C.t3, fontFamily: C.mono }}>
-                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
-                  </td>
-                  <td style={{ padding: "9px 12px", textAlign: "right" }}>
-                    <button
-                      type="button"
-                      disabled={removingId === doc.id}
-                      onClick={async () => {
-                        if (!window.confirm(`Remove “${doc.filename}” from the index?`)) return;
-                        setRemovingId(doc.id);
-                        try {
-                          await api.delete(`/documents/${doc.id}`);
-                          const { data: docs } = await api.get<Document[]>(`/documents/workspaces/${selectedWsId}`);
-                          setDocuments(docs);
-                        } catch (ex) {
-                          setUploadErr(apiErrorMessage(ex));
-                        } finally {
-                          setRemovingId(null);
-                        }
-                      }}
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: C.red,
-                        background: "none",
-                        border: "none",
-                        cursor: removingId === doc.id ? "wait" : "pointer",
-                        fontFamily: C.sans,
-                      }}
-                    >
-                      {removingId === doc.id ? "…" : "Remove"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Billing panel (same details as /admin/billing) ────────────────────────────
+// ─── Billing panel ───────────────────────────────────────────────────────────────
 type BillingOrg = { id: string; name: string };
 type BillingPlan = {
   organization_id: string;
@@ -2745,6 +1663,520 @@ function BillingPanel() {
   );
 }
 
+type AuditEvent = {
+  id: string;
+  created_at: string | null;
+  actor_email: string;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  workspace_id: string | null;
+  metadata: Record<string, unknown>;
+};
+
+function parseAuditCategory(value: string | null): "all" | "queries" | "admin" | "auth" | "sync" {
+  if (value === "queries" || value === "admin" || value === "auth" || value === "sync") return value;
+  return "all";
+}
+
+function parseAuditFailures(value: string | null): boolean {
+  return value === "1" || value === "true";
+}
+
+function AuditPanel({
+  orgs,
+  selectedOrgId,
+  workspaceScopeIds,
+}: {
+  orgs: Org[];
+  selectedOrgId: string;
+  workspaceScopeIds?: string[];
+}) {
+  const C = useOrgShellTokens();
+  const isWorkspaceScopedAudit = !!workspaceScopeIds && workspaceScopeIds.length > 0;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [action, setAction] = useState(() => searchParams.get("auditAction") ?? "");
+  const [category, setCategory] = useState<"all" | "queries" | "admin" | "auth" | "sync">(() =>
+    parseAuditCategory(searchParams.get("auditCategory")),
+  );
+  const [eventSearch, setEventSearch] = useState(() => searchParams.get("auditEvent") ?? "");
+  const [userSearch, setUserSearch] = useState(() => searchParams.get("auditUser") ?? "");
+  const [workspaceFilter, setWorkspaceFilter] = useState(() => searchParams.get("auditWorkspace") ?? "all");
+  const [onlyFailures, setOnlyFailures] = useState(() => parseAuditFailures(searchParams.get("auditFailures")));
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [rows, setRows] = useState<AuditEvent[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const qAction = searchParams.get("auditAction") ?? "";
+    const qCategory = parseAuditCategory(searchParams.get("auditCategory"));
+    const qEvent = searchParams.get("auditEvent") ?? "";
+    const qUser = searchParams.get("auditUser") ?? "";
+    const qWorkspace = searchParams.get("auditWorkspace") ?? "all";
+    const qFailures = parseAuditFailures(searchParams.get("auditFailures"));
+    if (action !== qAction) setAction(qAction);
+    if (category !== qCategory) setCategory(qCategory);
+    if (eventSearch !== qEvent) setEventSearch(qEvent);
+    if (userSearch !== qUser) setUserSearch(qUser);
+    if (workspaceFilter !== qWorkspace) setWorkspaceFilter(qWorkspace);
+    if (onlyFailures !== qFailures) setOnlyFailures(qFailures);
+  }, [searchParams, action, category, eventSearch, userSearch, workspaceFilter, onlyFailures]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    const setOrDelete = (key: string, value: string | null) => {
+      if (!value) next.delete(key);
+      else next.set(key, value);
+    };
+    setOrDelete("auditAction", action.trim() || null);
+    setOrDelete("auditCategory", category !== "all" ? category : null);
+    setOrDelete("auditEvent", eventSearch.trim() || null);
+    setOrDelete("auditUser", userSearch.trim() || null);
+    setOrDelete("auditWorkspace", workspaceFilter !== "all" ? workspaceFilter : null);
+    setOrDelete("auditFailures", onlyFailures ? "1" : null);
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [action, category, eventSearch, userSearch, workspaceFilter, onlyFailures, searchParams, setSearchParams]);
+
+  const load = useCallback(async () => {
+    if (!selectedOrgId) return;
+    setErr(null);
+    try {
+      const { data } = await api.get<AuditEvent[]>(`/organizations/${selectedOrgId}/audit`, {
+        params: {
+          action: action || undefined,
+          workspace_id: workspaceFilter !== "all" ? workspaceFilter : undefined,
+          limit: 400,
+        },
+      });
+      setRows(data);
+    } catch (e) {
+      setErr(apiErrorMessage(e));
+    }
+  }, [selectedOrgId, action]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function isFailureEvent(r: AuditEvent): boolean {
+    const m = JSON.stringify(r.metadata || {}).toLowerCase();
+    const a = r.action.toLowerCase();
+    return (
+      m.includes("error")
+      || m.includes("failed")
+      || m.includes("token_expired")
+      || a.includes("failed")
+      || a.includes("error")
+    );
+  }
+
+  const workspaceOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const id of workspaceScopeIds ?? []) ids.add(id);
+    for (const r of rows) {
+      if (r.workspace_id) ids.add(r.workspace_id);
+    }
+    return Array.from(ids).sort();
+  }, [rows, workspaceScopeIds]);
+
+  const filteredRows = rows.filter((r) => {
+    const act = r.action.toLowerCase();
+    const actor = (r.actor_email || "").toLowerCase();
+    const text = `${r.action} ${r.target_type} ${JSON.stringify(r.metadata || {})}`.toLowerCase();
+    if (category === "queries" && !act.includes("query")) return false;
+    if (category === "admin" && !(act.includes("org") || act.includes("team") || act.includes("billing") || act.includes("admin"))) return false;
+    if (category === "auth" && !(act.includes("auth") || act.includes("login") || act.includes("token"))) return false;
+    if (category === "sync" && !(act.includes("sync") || act.includes("connector") || act.includes("document"))) return false;
+    if (eventSearch && !text.includes(eventSearch.toLowerCase())) return false;
+    if (userSearch && !actor.includes(userSearch.toLowerCase())) return false;
+    if (workspaceFilter !== "all" && (r.workspace_id || "") !== workspaceFilter) return false;
+    if (onlyFailures && !isFailureEvent(r)) return false;
+    return true;
+  });
+
+  function actionClass(actionName: string) {
+    const a = actionName.toLowerCase();
+    if (a.includes("query")) return "sk-action-tag acq";
+    if (a.includes("auth") || a.includes("login")) return "sk-action-tag acau";
+    if (a.includes("sync") || a.includes("connector") || a.includes("document")) return "sk-action-tag acs";
+    return "sk-action-tag aca";
+  }
+
+  function resultBadge(r: AuditEvent) {
+    const fail = isFailureEvent(r);
+    return fail ? <span className="badge bred">token_expired</span> : <span className="badge bgreen">success</span>;
+  }
+
+  function severityBadge(r: AuditEvent) {
+    const a = r.action.toLowerCase();
+    if (isFailureEvent(r)) return <span className="badge bred">error</span>;
+    if (a.includes("delete") || a.includes("remove") || a.includes("revoke")) return <span className="badge byellow">warning</span>;
+    return <span className="badge bblue">info</span>;
+  }
+
+  function exportCsv() {
+    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const header = [
+      "timestamp",
+      "actor_email",
+      "action",
+      "target_type",
+      "workspace_id",
+      "result",
+      "metadata_json",
+    ].join(",");
+    const body = filteredRows
+      .map((r) =>
+        [
+          escape(r.created_at || ""),
+          escape(r.actor_email || "system"),
+          escape(r.action),
+          escape(r.target_type || ""),
+          escape(r.workspace_id || ""),
+          escape(isFailureEvent(r) ? "failed" : "success"),
+          escape(JSON.stringify(r.metadata || {})),
+        ].join(","),
+      )
+      .join("\n");
+    const blob = new Blob([`${header}\n${body}`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `audit-${selectedOrgId || "org"}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name ?? null;
+
+  return (
+    <div style={{ padding: "22px 26px", overflowY: "auto", height: "100%" }}>
+      <div className="sk-panel sk-audit-header">
+        <div>
+          <div className="sk-connectors-title">Audit Log</div>
+          <div className="sk-connectors-sub">
+            Immutable record of all system events{selectedOrgName ? ` · ${selectedOrgName}` : ""}.
+          </div>
+          {isWorkspaceScopedAudit && (
+            <div
+              style={{
+                marginTop: 10,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                borderRadius: 999,
+                padding: "4px 10px",
+                fontSize: 11,
+                fontWeight: 700,
+                color: C.gold,
+                background: "rgba(245,158,11,0.12)",
+                border: "1px solid rgba(245,158,11,0.3)",
+              }}
+            >
+              Workspace-scoped access
+            </div>
+          )}
+        </div>
+        <button className="sk-btn secondary" type="button" onClick={exportCsv} disabled={filteredRows.length === 0}>
+          Export CSV
+        </button>
+      </div>
+      {err && <p className="sk-error">{err}</p>}
+      {!selectedOrgId && (
+        <p className="sk-muted">Select an organization first to view the audit log.</p>
+      )}
+      <div className="sk-panel sk-spaced" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: "0.75rem", maxWidth: 980 }}>
+        <div>
+          <label className="sk-label">Action filter</label>
+          <Input value={action} onChange={setAction} placeholder="organization_updated" />
+        </div>
+        <div>
+          <label className="sk-label">User filter</label>
+          <Input value={userSearch} onChange={setUserSearch} placeholder="user@company.com" />
+        </div>
+        <div>
+          <label className="sk-label">Workspace</label>
+          <select
+            className="sk-input"
+            value={workspaceFilter}
+            onChange={(e) => setWorkspaceFilter(e.target.value)}
+          >
+            <option value="all">All workspaces</option>
+            {workspaceOptions.map((id) => (
+              <option key={id} value={id}>
+                {id.slice(0, 8)}…
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ alignSelf: "end" }}>
+          <button className="sk-btn secondary" onClick={() => void load()}>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="sk-audit-filters">
+        <button type="button" className={`sk-filter-chip ${category === "all" ? "on" : ""}`} onClick={() => setCategory("all")}>
+          All events
+        </button>
+        <button type="button" className={`sk-filter-chip ${category === "queries" ? "on" : ""}`} onClick={() => setCategory("queries")}>
+          Queries
+        </button>
+        <button type="button" className={`sk-filter-chip ${category === "admin" ? "on" : ""}`} onClick={() => setCategory("admin")}>
+          Admin
+        </button>
+        <button type="button" className={`sk-filter-chip ${category === "auth" ? "on" : ""}`} onClick={() => setCategory("auth")}>
+          Auth
+        </button>
+        <button type="button" className={`sk-filter-chip ${category === "sync" ? "on" : ""}`} onClick={() => setCategory("sync")}>
+          Sync
+        </button>
+        <Input value={eventSearch} onChange={setEventSearch} placeholder="Search events..." style={{ maxWidth: 220 }} />
+        <button
+          type="button"
+          className={`sk-filter-chip ${onlyFailures ? "on" : ""}`}
+          onClick={() => setOnlyFailures((v) => !v)}
+        >
+          Failures only
+        </button>
+      </div>
+
+      <div className="sk-panel" style={{ overflow: "auto" }}>
+        <table className="sk-audit-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Resource</th>
+              <th>Severity</th>
+              <th>Result</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((r) => {
+              const expanded = expandedId === r.id;
+              return (
+                <Fragment key={r.id}>
+                  <tr>
+                    <td>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+                    <td>{r.actor_email || "system"}</td>
+                    <td>
+                      <span className={actionClass(r.action)}>{r.action}</span>
+                    </td>
+                    <td className="sk-mono">{r.target_type || "—"}</td>
+                    <td>{severityBadge(r)}</td>
+                    <td>{resultBadge(r)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        type="button"
+                        className="sk-btn secondary"
+                        style={{ padding: "0.2rem 0.45rem", fontSize: "0.66rem" }}
+                        onClick={() => setExpandedId((cur) => (cur === r.id ? null : r.id))}
+                      >
+                        {expanded ? "Hide" : "Details"}
+                      </button>
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)" }}>
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <div style={{ fontSize: 11, color: C.t2 }}>
+                            <strong style={{ color: C.t1 }}>Target ID:</strong> {r.target_id || "—"}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.t2 }}>
+                            <strong style={{ color: C.t1 }}>Workspace ID:</strong> {r.workspace_id || "—"}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.t2 }}>
+                            <strong style={{ color: C.t1 }}>Metadata</strong>
+                          </div>
+                          <pre
+                            className="sk-mono"
+                            style={{
+                              margin: 0,
+                              fontSize: 11,
+                              lineHeight: 1.45,
+                              whiteSpace: "pre-wrap",
+                              background: C.bgE,
+                              border: `1px solid ${C.bd}`,
+                              borderRadius: 8,
+                              padding: "8px 10px",
+                            }}
+                          >
+                            {JSON.stringify(r.metadata || {}, null, 2)}
+                          </pre>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+        {filteredRows.length === 0 && <p className="sk-muted">No audit events for this scope.</p>}
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({
+  orgs,
+  selectedOrgId,
+  onSelectOrg,
+  onSavedOrg,
+  onSavedWorkspace,
+  onOrgDeleted,
+  isPlatformOwner,
+  workspaces,
+  canManageOrgSettings,
+  canManageWorkspaceSettings,
+}: {
+  orgs: Org[];
+  selectedOrgId: string;
+  onSelectOrg: (orgId: string) => void;
+  onSavedOrg: (updated: Org) => void;
+  onSavedWorkspace: (updated: Workspace) => void;
+  onOrgDeleted: () => Promise<void> | void;
+  isPlatformOwner: boolean;
+  workspaces: Workspace[];
+  canManageOrgSettings: boolean;
+  canManageWorkspaceSettings: boolean;
+}) {
+  const C = useOrgShellTokens();
+  const selectedOrg = orgs.find((o) => o.id === selectedOrgId) ?? null;
+  const isWorkspaceScopedSettings = canManageWorkspaceSettings && !canManageOrgSettings;
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const selectedWorkspace =
+    workspaces.find((ws) => ws.id === selectedWorkspaceId) ?? (workspaces.length > 0 ? workspaces[0] : null);
+
+  useEffect(() => {
+    if (!workspaces.length) {
+      setSelectedWorkspaceId("");
+      return;
+    }
+    if (!selectedWorkspaceId || !workspaces.some((ws) => ws.id === selectedWorkspaceId)) {
+      setSelectedWorkspaceId(workspaces[0].id);
+    }
+  }, [workspaces, selectedWorkspaceId]);
+
+  return (
+    <div style={{ padding: "22px 26px", overflowY: "auto", height: "100%" }}>
+      <div style={{
+        background: C.bgCard,
+        border: `1px solid ${C.bd}`,
+        borderRadius: 14,
+        padding: "16px 18px",
+        marginBottom: 12,
+      }}>
+        <div style={{ fontFamily: C.serif, fontSize: 22, color: C.t1, marginBottom: 4 }}>Settings</div>
+        <div style={{ fontSize: 12, color: C.t2 }}>
+          Organization profile and runtime/public configuration.
+        </div>
+        {isWorkspaceScopedSettings && (
+          <div
+            style={{
+              marginTop: 10,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              borderRadius: 999,
+              padding: "4px 10px",
+              fontSize: 11,
+              fontWeight: 700,
+              color: C.gold,
+              background: "rgba(245,158,11,0.12)",
+              border: "1px solid rgba(245,158,11,0.3)",
+            }}
+          >
+            Workspace-scoped access
+          </div>
+        )}
+      </div>
+      <div style={{ maxWidth: 420, marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
+          Organization
+        </div>
+        <select
+          value={selectedOrgId}
+          onChange={(e) => onSelectOrg(e.target.value)}
+          style={{
+            width: "100%",
+            background: C.bgCard,
+            border: `1px solid ${C.bd}`,
+            borderRadius: 8,
+            padding: "9px 10px",
+            fontSize: 12,
+            color: C.t1,
+            fontFamily: C.sans,
+            outline: "none",
+          }}
+        >
+          {orgs.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {canManageOrgSettings && selectedOrg ? (
+        <OrganizationSettingsPanel
+          org={selectedOrg}
+          onSaved={onSavedOrg}
+          showDangerZone
+          onOrgDeleted={onOrgDeleted}
+          isPlatformOwner={isPlatformOwner}
+        />
+      ) : canManageWorkspaceSettings ? (
+        <>
+          <div style={{ maxWidth: 420, marginBottom: 12 }}>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: C.t3,
+                marginBottom: 6,
+              }}
+            >
+              Workspace
+            </div>
+            <select
+              value={selectedWorkspace?.id ?? ""}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+              className="sk-input"
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedWorkspace ? (
+            <WorkspaceSettingsPanel
+              ws={selectedWorkspace}
+              onSaved={onSavedWorkspace}
+              workspaceCountInOrg={workspaces.length}
+              showDangerZone={false}
+            />
+          ) : (
+            <p className="sk-muted">No workspace settings available in this organization.</p>
+          )}
+        </>
+      ) : (
+        <p className="sk-muted">You do not have settings access in this organization.</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Upload modal (triggered from workspace row) ───────────────────────────────
 function UploadModal({ ws, onClose }: { ws: Workspace; onClose: () => void }) {
   const C = useOrgShellTokens();
@@ -2792,7 +2224,7 @@ function UploadModal({ ws, onClose }: { ws: Workspace; onClose: () => void }) {
           Upload to <em style={{ fontStyle: "italic" }}>{ws.name}</em>
         </div>
         <div style={{ fontSize: 12, color: C.t2, marginBottom: 20 }}>
-          PDFs are parsed, chunked, and embedded for RAG retrieval.
+          Tier 1–2 formats (PDF, DOCX, PPTX, XLS/XLSX, CSV, RTF, TXT, MD, HTML) — max 50 MB.
         </div>
 
         <div
@@ -2804,10 +2236,10 @@ function UploadModal({ ws, onClose }: { ws: Workspace; onClose: () => void }) {
         >
           <div style={{ fontSize: 28, marginBottom: 6 }}>📁</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: C.t1, marginBottom: 2 }}>
-            {uploading ? "Indexing…" : "Click to select a PDF"}
+            {uploading ? "Indexing…" : "Click to select a file"}
           </div>
-          <div style={{ fontSize: 10, color: C.t3 }}>Supported: PDF · Max 50 MB</div>
-          <input ref={fileRef} type="file" accept="application/pdf" style={{ display: "none" }} onChange={handleUpload} disabled={uploading} />
+          <div style={{ fontSize: 10, color: C.t3 }}>PDF, DOCX, PPTX, XLSX, CSV, RTF, TXT, MD, HTML · Max 50 MB</div>
+          <input ref={fileRef} type="file" accept={DOCUMENT_UPLOAD_ACCEPT} style={{ display: "none" }} onChange={handleUpload} disabled={uploading} />
         </div>
 
         {err && <div style={{ fontSize: 11, color: C.red, marginBottom: 10 }}>✗ {err}</div>}
@@ -2845,6 +2277,7 @@ function HomePageContent({
 }: HomePageContentProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     navigationScope,
     activeOrganizationId,
@@ -2859,214 +2292,78 @@ function HomePageContent({
 
   const selectedOrgId = activeOrganizationId ?? "";
 
-  const [panel, setPanel] = useState<Panel>(() => (user?.is_platform_owner ? "platform" : "dashboard"));
-
   // Create org form
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [newName, setNewName] = useState("");
   const [newSlug, setNewSlug] = useState("");
+  /** Defaults favor self-hosted Ollama; platform owner can switch before create. */
+  const [newOrgChatProv, setNewOrgChatProv] = useState<OrgChatProvider>("ollama");
+  const [newOrgChatModel, setNewOrgChatModel] = useState("");
+  const [newOrgOllamaBase, setNewOrgOllamaBase] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
-  const [workspaceCountByOrg, setWorkspaceCountByOrg] = useState<Record<string, number>>({});
-  const [loadingWs, setLoadingWs] = useState(false);
-  /** Bumps workspace list refetch after destructive deletes (org/workspace). */
-  const [workspacesReloadNonce, setWorkspacesReloadNonce] = useState(0);
-  // Workspace to auto-select when switching to workspaces panel
-  const [jumpToWsId, setJumpToWsId] = useState<string | undefined>(undefined);
-  /** Organizations panel: overview vs settings (mirrors workspace panel). */
-  const [orgScreen, setOrgScreen] = useState<OrgScreen>("overview");
-  // Workspace to highlight in Chats list (when not in embedded chat)
-  const [jumpToChatWsId, setJumpToChatWsId] = useState<string | undefined>(undefined);
+  const {
+    panel,
+    setPanel,
+    workspaces,
+    setWorkspaces,
+    allWorkspaces,
+    setAllWorkspaces,
+    workspaceCountByOrg,
+    loadingWs,
+    workspacesReloadNonce,
+    setWorkspacesReloadNonce,
+    jumpToWsId,
+    setJumpToWsId,
+    orgScreen,
+    setOrgScreen,
+    jumpToChatWsId,
+    setJumpToChatWsId,
+    chatWorkspaceId,
+    setChatWorkspaceId,
+    onEmbeddedChatWorkspaceChange,
+    uploadWs,
+    setUploadWs,
+    scopedWorkspaces,
+    workspaceInContext,
+  } = useHomeWorkspaceState({
+    orgs,
+    selectedOrgId,
+    userIsPlatformOwner: !!user?.is_platform_owner,
+    api,
+    ctxWorkspaceId,
+    ctxWorkspaceName,
+    setActiveWorkspaceContext,
+  });
 
   useEffect(() => {
-    setOrgScreen("overview");
-  }, [selectedOrgId]);
-  /** Open chat UI inside main area while keeping platform sidebar */
-  const [chatWorkspaceId, setChatWorkspaceId] = useState<string | null>(null);
-  /** Stable for Dashboard embedded mode — avoids refetch/loading flash on every HomePage re-render. */
-  const onEmbeddedChatWorkspaceChange = useCallback((id: string) => {
-    setChatWorkspaceId(id);
-  }, []);
+    const qPanel = panelFromQuery(searchParams.get("panel"));
+    if (!qPanel || qPanel === panel) return;
+    setPanel(qPanel);
+  }, [searchParams, panel, setPanel]);
 
-  // Upload modal
-  const [uploadWs, setUploadWs] = useState<Workspace | null>(null);
+  useEffect(() => {
+    const current = panelFromQuery(searchParams.get("panel"));
+    if (current === panel) return;
+    const next = new URLSearchParams(searchParams);
+    if (panel === "platform" || panel === "dashboard" || panel === "orgs") {
+      next.delete("panel");
+    } else {
+      next.set("panel", panel);
+    }
+    setSearchParams(next, { replace: true });
+  }, [panel, searchParams, setSearchParams]);
+
   void useRef; // silence unused-import (used in UploadModal + DocumentsPanel)
 
-  useEffect(() => {
-    if (panel !== "chats") {
-      setJumpToChatWsId(undefined);
-      setChatWorkspaceId(null);
-    }
-  }, [panel]);
-
-  useEffect(() => {
-    if (!chatWorkspaceId) return;
-    const w =
-      allWorkspaces.find((x) => x.id === chatWorkspaceId) ??
-      workspaces.find((x) => x.id === chatWorkspaceId);
-    setActiveWorkspaceContext(chatWorkspaceId, w?.name ?? null);
-  }, [chatWorkspaceId, allWorkspaces, workspaces, setActiveWorkspaceContext]);
-
-  /** Clear workspace scope only when leaving org-scoped "modes" — keep context for Team, Analytics, Connectors, Docs, etc. */
-  useEffect(() => {
-    if (panel === "platform" || panel === "orgs" || panel === "billing") {
-      setActiveWorkspaceContext(null, null);
-    }
-  }, [panel, setActiveWorkspaceContext]);
-
-  /** Drop workspace context if it no longer belongs to the active organization. */
-  useEffect(() => {
-    if (!ctxWorkspaceId || !selectedOrgId) return;
-    if (loadingWs) return;
-    const ws =
-      allWorkspaces.find((w) => w.id === ctxWorkspaceId) ??
-      workspaces.find((w) => w.id === ctxWorkspaceId);
-    if (!ws || ws.organization_id !== selectedOrgId) {
-      setActiveWorkspaceContext(null, null);
-    }
-  }, [selectedOrgId, ctxWorkspaceId, allWorkspaces, workspaces, loadingWs, setActiveWorkspaceContext]);
-
-  // Fetch workspace counts (all orgs) for platform dashboard + chat list
-  useEffect(() => {
-    if (!orgs.length) {
-      setAllWorkspaces([]);
-      setWorkspaceCountByOrg({});
-      return;
-    }
-    let cancelled = false;
-    void Promise.allSettled(
-      orgs.map((o) =>
-        api.get<Workspace[]>(`/workspaces/org/${o.id}`).then((r) => ({ id: o.id, list: r.data })),
-      ),
-    ).then((results) => {
-      if (cancelled) return;
-      const fulfilled = results.filter(
-        (r): r is PromiseFulfilledResult<{ id: string; list: Workspace[] }> => r.status === "fulfilled",
-      );
-      const merged: Workspace[] = [];
-      for (const { value } of fulfilled) {
-        merged.push(...value.list);
-      }
-      // Keep prior counts for orgs whose request failed so one bad / slow org does not zero others (e.g. Sterling).
-      setWorkspaceCountByOrg((prev) => {
-        const next: Record<string, number> = {};
-        for (const o of orgs) {
-          next[o.id] = prev[o.id] ?? 0;
-        }
-        for (const { value } of fulfilled) {
-          next[value.id] = value.list.length;
-        }
-        return next;
-      });
-      setAllWorkspaces(merged);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [orgs, workspacesReloadNonce]);
-
-  // Load workspaces for active organization (org-scoped modules)
-  useEffect(() => {
-    if (!selectedOrgId) {
-      setWorkspaces([]);
-      setLoadingWs(false);
-      return;
-    }
-    let stale = false;
-    setLoadingWs(true);
-    setWorkspaces([]);
-    api
-      .get<Workspace[]>(`/workspaces/org/${selectedOrgId}`)
-      .then(({ data }) => {
-        if (stale) return;
-        setWorkspaces(data);
-      })
-      .catch(() => {
-        if (stale) return;
-        setWorkspaces([]);
-      })
-      .finally(() => {
-        if (stale) return;
-        setLoadingWs(false);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [selectedOrgId]);
-
-  // Align platform workspace counts with the authoritative per-org list once it finishes loading.
-  useEffect(() => {
-    if (!selectedOrgId || loadingWs) return;
-    setWorkspaceCountByOrg((prev) => ({ ...prev, [selectedOrgId]: workspaces.length }));
-  }, [selectedOrgId, workspaces, loadingWs]);
-
-  /**
-   * Prefer the dedicated `/workspaces/org/:id` list: it is authoritative for the open org.
-   * Filtering dedicated rows by `organization_id` hid everything when a stale response from another org
-   * overwrote state (last write wins) — those rows no longer matched `selectedOrgId`.
-   */
-  const scopedWorkspaces = useMemo(() => {
-    if (!selectedOrgId) return [] as Workspace[];
-    const fromBatch = allWorkspaces.filter((w) => w.organization_id === selectedOrgId);
-    if (workspaces.length > 0) return workspaces;
-    return fromBatch;
-  }, [allWorkspaces, selectedOrgId, workspaces]);
-
-  /** Resolved workspace for nav panels (Team / Analytics / Connectors) when a workspace is selected in context. */
-  const workspaceInContext = useMemo((): Workspace | null => {
-    if (!ctxWorkspaceId) return null;
-    const w =
-      allWorkspaces.find((x) => x.id === ctxWorkspaceId) ?? workspaces.find((x) => x.id === ctxWorkspaceId);
-    if (w) return w;
-    if (selectedOrgId && ctxWorkspaceName) {
-      return {
-        id: ctxWorkspaceId,
-        organization_id: selectedOrgId,
-        name: ctxWorkspaceName,
-        description: null,
-      };
-    }
-    return null;
-  }, [ctxWorkspaceId, ctxWorkspaceName, allWorkspaces, workspaces, selectedOrgId]);
-
-  /** True when any workspace in the active org has at least one indexed document; null while loading. */
-  const [orgHasIndexedDocuments, setOrgHasIndexedDocuments] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (!selectedOrgId || scopedWorkspaces.length === 0) {
-      setOrgHasIndexedDocuments(null);
-      return;
-    }
-    let cancelled = false;
-    void Promise.allSettled(
-      scopedWorkspaces.map((ws) =>
-        api.get<Document[]>(`/documents/workspaces/${ws.id}`).then((r) => r.data.length),
-      ),
-    ).then((results) => {
-      if (cancelled) return;
-      const ok = results.filter(
-        (r): r is PromiseFulfilledResult<number> => r.status === "fulfilled",
-      );
-      if (ok.length === 0) {
-        setOrgHasIndexedDocuments(null);
-        return;
-      }
-      setOrgHasIndexedDocuments(ok.some((r) => r.value > 0));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedOrgId, scopedWorkspaces]);
-
-  useEffect(() => {
-    if (isPlatformOwner) return;
-    if (orgHasIndexedDocuments !== false) return;
-    if (panel !== "chats" && panel !== "team") return;
-    if (!selectedOrgId) return;
-    setPanel("docs");
-  }, [orgHasIndexedDocuments, panel, selectedOrgId, isPlatformOwner]);
+  const { orgHasIndexedDocuments } = useOrgKnowledgeGate({
+    api,
+    selectedOrgId,
+    scopedWorkspaces,
+    isPlatformOwner,
+    panel,
+    setPanel,
+  });
 
   async function createOrg(e: FormEvent) {
     e.preventDefault();
@@ -3074,12 +2371,19 @@ function HomePageContent({
     setCreating(true);
     setErr(null);
     try {
-      const { data: newOrg } = await api.post<Org>("/organizations", {
+      const body: Record<string, unknown> = {
         name: newName.trim(),
         slug: newSlug.trim().toLowerCase(),
-      });
+      };
+      if (newOrgChatProv) body.preferred_chat_provider = newOrgChatProv;
+      if (newOrgChatModel.trim()) body.preferred_chat_model = newOrgChatModel.trim();
+      if (newOrgOllamaBase.trim()) body.ollama_base_url = newOrgOllamaBase.trim();
+      const { data: newOrg } = await api.post<Org>("/organizations", body);
       setNewName("");
       setNewSlug("");
+      setNewOrgChatProv("ollama");
+      setNewOrgChatModel("");
+      setNewOrgOllamaBase("");
       setShowCreateOrg(false);
       await loadOrgs();
       enterOrganization(newOrg.id);
@@ -3092,93 +2396,54 @@ function HomePageContent({
   }
 
   const initials = user?.email?.slice(0, 2).toUpperCase() ?? "??";
+  const hasOrgOwnerAccess =
+    !!user?.is_platform_owner || (!!selectedOrgId && (user?.org_ids_as_owner ?? []).includes(selectedOrgId));
+  const hasWorkspaceAdminAccess =
+    !!user?.is_platform_owner || (!!selectedOrgId && (user?.org_ids_as_workspace_admin ?? []).includes(selectedOrgId));
+  const workspaceScopeIds = hasOrgOwnerAccess ? undefined : scopedWorkspaces.map((ws) => ws.id);
+  const canViewBilling = hasOrgOwnerAccess;
+  const canViewAudit = hasOrgOwnerAccess || hasWorkspaceAdminAccess;
+  const canViewSettings = hasOrgOwnerAccess || hasWorkspaceAdminAccess;
 
   const C = brightMode ? ORG_SHELL_TOKENS_BRIGHT : ORG_SHELL_TOKENS_DARK;
-
-  /** Panels that require an active org when the user is in platform-wide scope (not "dashboard" — it has its own empty state + link to Organizations). */
-  const ORG_SCOPED_PANELS: Panel[] = [
-    "workspaces",
-    "chats",
-    "team",
-    "analytics",
-    "docs",
-    "connectors",
-    "billing",
-  ];
-
-  const navGroups = user?.is_platform_owner
-    ? [
-        {
-          label: "Platform",
-          items: [{ id: "platform" as Panel, icon: "\u{1F310}", label: "Overview" }],
-        },
-        {
-          label: "Core app",
-          items: [
-            { id: "dashboard" as Panel, icon: dashNavIcon, label: "Dashboard" },
-            { id: "orgs" as Panel, icon: "\u{1F3E2}", label: "Organizations" },
-            { id: "workspaces" as Panel, icon: "\u{2B21}", label: "Workspaces" },
-            { id: "chats" as Panel, icon: "\u{1F4AC}", label: "Chats" },
-          ],
-        },
-        {
-          label: "Knowledge",
-          items: [
-            { id: "team" as Panel, icon: "\u{1F465}", label: "Team", badge: 12 },
-            { id: "analytics" as Panel, icon: "\u{1F4CA}", label: "Analytics" },
-            { id: "docs" as Panel, icon: "\u{1F4C4}", label: "Documents" },
-            {
-              id: "connectors" as Panel,
-              icon: "\u{1F50C}",
-              label: "Connectors",
-              badge: 1,
-              badgeVariant: "danger" as const,
-            },
-          ],
-        },
-        {
-          label: "Enterprise",
-          items: [
-            { id: "billing" as Panel, icon: "\u{1F4B3}", label: "Billing" },
-            { id: null, icon: "\u{1F6E1}", label: "Audit Log", href: "/admin/audit" },
-            { id: null, icon: "\u{2699}\u{FE0F}", label: "Settings", href: "/admin/settings" },
-          ],
-        },
-      ]
-    : [
-        {
-          label: "Core app",
-          items: [
-            { id: "dashboard" as Panel, icon: dashNavIcon, label: "Dashboard" },
-            { id: "orgs" as Panel, icon: "\u{1F3E2}", label: "Organizations" },
-            { id: "workspaces" as Panel, icon: "\u{2B21}", label: "Workspaces" },
-            { id: "chats" as Panel, icon: "\u{1F4AC}", label: "Chats" },
-          ],
-        },
-        {
-          label: "Knowledge",
-          items: [
-            { id: "team" as Panel, icon: "\u{1F465}", label: "Team", badge: 12 },
-            { id: "analytics" as Panel, icon: "\u{1F4CA}", label: "Analytics" },
-            { id: "docs" as Panel, icon: "\u{1F4C4}", label: "Documents" },
-            {
-              id: "connectors" as Panel,
-              icon: "\u{1F50C}",
-              label: "Connectors",
-              badge: 1,
-              badgeVariant: "danger" as const,
-            },
-          ],
-        },
-        {
-          label: "Enterprise",
-          items: [
-            { id: "billing" as Panel, icon: "\u{1F4B3}", label: "Billing" },
-            { id: null, icon: "\u{1F6E1}", label: "Audit Log", href: "/admin/audit" },
-            { id: null, icon: "\u{2699}\u{FE0F}", label: "Settings", href: "/admin/settings" },
-          ],
-        },
-      ];
+  const { navGroups, onSelectNavItem } = useHomeNavState({
+    userIsPlatformOwner: !!user?.is_platform_owner,
+    canViewBilling,
+    canViewAudit,
+    canViewSettings,
+    dashNavIcon,
+    needsOrganizationContext,
+    selectedOrgId,
+    orgHasIndexedDocuments,
+    isPlatformOwner,
+    ctxWorkspaceId,
+    setJumpToChatWsId,
+    setChatWorkspaceId,
+    setPanel,
+    navigate,
+  });
+  const navGroupsWithState = useMemo(
+    () =>
+      navGroups.map((group) => ({
+        ...group,
+        items: group.items.map((item) => {
+          const lock = getNavLockState(
+            item.id,
+            needsOrganizationContext,
+            selectedOrgId,
+            orgHasIndexedDocuments,
+            isPlatformOwner,
+          );
+          return {
+            ...item,
+            disabled: lock.navDisabled,
+            title: lock.title,
+          };
+        }),
+      })),
+    [navGroups, needsOrganizationContext, selectedOrgId, orgHasIndexedDocuments, isPlatformOwner],
+  );
+  const selectedOrgName = orgs.find((o) => o.id === selectedOrgId)?.name ?? null;
 
   return (
     <div
@@ -3186,586 +2451,108 @@ function HomePageContent({
       style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: C.sans, overflow: "hidden" }}
     >
 
-      {/* ── Sidebar ── */}
-      <aside style={{
-        width: 210, flexShrink: 0, background: C.bg,
-        borderRight: `1px solid ${C.hairline}`,
-        display: "flex", flexDirection: "column", overflowY: "auto",
-      }}>
-        {/* Logo */}
-        <div style={{
-          padding: "14px 14px 14px", borderBottom: `1px solid ${C.hairline}`,
-          display: "flex", alignItems: "center", gap: 8,
-          fontSize: 13, fontWeight: 600, color: C.t1,
-        }}>
-          <div style={{
-            width: 24, height: 24, background: C.accent, borderRadius: 5,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: `0 0 12px ${C.accentG}`,
-          }}>
-            <svg viewBox="0 0 18 18" style={{ width: 13, height: 13, fill: "white" }}>
-              <path d="M9 1L2 5v8l7 4 7-4V5L9 1zm0 2.2l4.8 2.8L9 8.8 4.2 6 9 3.2zm-5.8 3.8l5 2.9v5.2L3.2 12V7zm6.8 8.1V9.9l5-2.9V12l-5 2.9z" />
-            </svg>
-          </div>
-          Sovereign Knowledge
-        </div>
-
-        {/* Nav groups */}
-        {navGroups.map((group) => (
-          <div key={group.label}>
-            <div style={{
-              fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-              color: C.t3, padding: "10px 14px 4px",
-            }}>
-              {group.label}
-            </div>
-            {group.items.map((item) => {
-              const pid = "id" in item && item.id ? item.id : null;
-              const orgLocked =
-                Boolean(pid && ORG_SCOPED_PANELS.includes(pid) && needsOrganizationContext);
-              const knowledgeLocked =
-                Boolean(
-                  pid &&
-                    KNOWLEDGE_GATED_PANELS.includes(pid) &&
-                    selectedOrgId &&
-                    orgHasIndexedDocuments !== true &&
-                    !isPlatformOwner,
-                );
-              const navDisabled = orgLocked || knowledgeLocked;
-              return (
-              <NavItem
-                key={item.label}
-                icon={item.icon}
-                label={item.label}
-                active={Boolean(pid && pid === panel)}
-                badge={"badge" in item ? item.badge : undefined}
-                badgeVariant={"badgeVariant" in item ? item.badgeVariant : "accent"}
-                disabled={navDisabled}
-                title={
-                  orgLocked
-                    ? "Select an organization from Platform overview or Organizations first"
-                    : knowledgeLocked
-                      ? "Index at least one PDF under Documents (any workspace) before Chats and Team"
-                      : undefined
-                }
-                onClick={() => {
-                  if ("href" in item && item.href) {
-                    navigate(item.href);
-                  } else if ("id" in item && item.id) {
-                    if (ORG_SCOPED_PANELS.includes(item.id) && needsOrganizationContext) return;
-                    if (
-                      KNOWLEDGE_GATED_PANELS.includes(item.id) &&
-                      selectedOrgId &&
-                      orgHasIndexedDocuments !== true &&
-                      !isPlatformOwner
-                    ) {
-                      return;
-                    }
-                    if (item.id === "chats") {
-                      setJumpToChatWsId(undefined);
-                      /** Open the in-context workspace thread directly (latest session on load); otherwise show workspace picker. */
-                      setChatWorkspaceId(ctxWorkspaceId ?? null);
-                    }
-                    setPanel(item.id);
-                  }
-                }}
-              />
-            );})}
-          </div>
-        ))}
-
-        {/* User footer */}
-        <div style={{ marginTop: "auto", padding: "12px 14px", borderTop: `1px solid ${C.hairline}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <div style={{
-              width: 27, height: 27, borderRadius: "50%",
-              background: "linear-gradient(135deg,#2563EB,#7C3AED)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 700, color: "white", flexShrink: 0,
-            }}>
-              {initials}
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 130 }}>
-                {user?.email}
-              </div>
-              {user?.is_platform_owner && (
-                <div style={{ fontSize: 9, color: C.green, fontFamily: C.mono }}>platform owner</div>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            style={{
-              width: "100%", padding: "5px 10px", border: `1px solid ${C.bd}`,
-              borderRadius: 6, background: "transparent", color: C.t2,
-              fontSize: 11, fontFamily: C.sans, cursor: "pointer",
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-      </aside>
+      <HomeSidebar
+        navGroups={navGroupsWithState}
+        panel={panel}
+        onSelectNavItem={onSelectNavItem}
+        user={user}
+        initials={initials}
+        onLogout={() => void logout()}
+      />
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-        {/* Top bar */}
-        <div style={{
-          height: 50, background: C.bgS, borderBottom: `1px solid ${C.bd}`,
-          display: "flex", alignItems: "center", padding: "0 20px", gap: 12, flexShrink: 0,
-        }}>
-          {panel === "chats" && chatWorkspaceId && (
-            <button
-              type="button"
-              className="skc-exit-embedded"
-              onClick={() => setChatWorkspaceId(null)}
-            >
-              ← Chats
-            </button>
-          )}
-          <div style={{ flex: 1, fontSize: 12, color: C.t3, display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              Platform /{" "}
-              <span style={{ color: C.t1, fontWeight: 500 }}>
-                {panel === "platform" ? "Platform overview"
-                  : panel === "dashboard" ? "Dashboard"
-                  : panel === "team"
-                    ? (ctxWorkspaceName ? `Team · ${ctxWorkspaceName}` : "Team")
-                  : panel === "orgs" ? "Organizations"
-                  : panel === "workspaces" ? "Workspaces"
-                  : panel === "chats"
-                    ? (chatWorkspaceId ? "Chats · Conversation" : "Chats")
-                  : panel === "analytics"
-                    ? (ctxWorkspaceName ? `Analytics · ${ctxWorkspaceName}` : "Analytics")
-                  : panel === "connectors"
-                    ? (ctxWorkspaceName ? `Connectors · ${ctxWorkspaceName}` : "Connectors")
-                  : panel === "billing" ? "Billing"
-                  : "Documents"}
-              </span>
-            </span>
-            {panel === "chats" && chatWorkspaceId && scopedWorkspaces.length > 0 && (
-              <select
-                className="skc-workspace-select"
-                value={chatWorkspaceId}
-                onChange={(e) => setChatWorkspaceId(e.target.value)}
-                aria-label="Workspace"
-              >
-                {scopedWorkspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: 4,
-            padding: "2px 8px", borderRadius: 100, fontSize: 10, fontWeight: 600,
-            background: "rgba(16,185,129,0.12)", color: C.green, border: "1px solid rgba(16,185,129,0.25)",
-          }}>
-            <span style={{ width: 5, height: 5, background: C.green, borderRadius: "50%", display: "inline-block" }} />
-            {panel === "platform" || panel === "dashboard" ? "Live" : "Operational"}
-          </span>
-          <button
-            type="button"
-            aria-pressed={brightMode}
-            title={brightMode ? "Switch to dark appearance" : "Switch to bright appearance"}
-            onClick={() => setBrightMode((v) => !v)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 8,
-              border: `1px solid ${C.bd2}`,
-              background: brightMode ? "rgba(37,99,235,0.12)" : "transparent",
-              color: C.t2,
-              fontSize: 11,
-              fontWeight: 600,
-              fontFamily: C.sans,
-              cursor: "pointer",
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 13 }}>{brightMode ? "🌙" : "☀️"}</span>
-            {brightMode ? "Dark" : "Bright"}
-          </button>
-          <div style={{
-            width: 27, height: 27, borderRadius: "50%",
-            background: "linear-gradient(135deg,#2563EB,#7C3AED)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 10, fontWeight: 700, color: "white", cursor: "pointer",
-          }}>
-            {initials}
-          </div>
-        </div>
-
-        {user?.is_platform_owner && (
-          <div
-            style={{
-              flexShrink: 0,
-              padding: "8px 20px",
-              borderBottom: `1px solid ${C.bd}`,
-              background: C.bgE,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-              fontSize: 11,
-              color: C.t2,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                exitToPlatform();
-                setPanel("platform");
-              }}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: `1px solid ${navigationScope === "platform" ? C.accent : C.bd}`,
-                background: navigationScope === "platform" ? "rgba(37,99,235,0.12)" : "transparent",
-                color: C.t1,
-                fontWeight: 600,
-                cursor: "pointer",
-                fontFamily: C.sans,
-              }}
-            >
-              Platform
-            </button>
-            <span style={{ color: C.t3 }}>›</span>
-            {navigationScope === "organization" && selectedOrgId ? (
-              <>
-                <span style={{ color: C.t1, fontWeight: 600 }}>
-                  {orgs.find((o) => o.id === selectedOrgId)?.name ?? "Organization"}
-                </span>
-                {(ctxWorkspaceId || ctxWorkspaceName) && (
-                  <>
-                    <span style={{ color: C.t3 }}>›</span>
-                    <span style={{ color: C.t1 }}>{ctxWorkspaceName ?? "Workspace"}</span>
-                  </>
-                )}
-              </>
-            ) : (
-              <span style={{ color: C.t3, fontStyle: "italic" }}>
-                Platform-wide — select an organization to scope the app
-              </span>
-            )}
-          </div>
-        )}
+        <HomeTopBar
+          panel={panel}
+          chatWorkspaceId={chatWorkspaceId}
+          setChatWorkspaceId={setChatWorkspaceId}
+          scopedWorkspaces={scopedWorkspaces}
+          ctxWorkspaceName={ctxWorkspaceName}
+          brightMode={brightMode}
+          setBrightMode={setBrightMode}
+          initials={initials}
+          isPlatformOwner={!!user?.is_platform_owner}
+          navigationScope={navigationScope}
+          selectedOrgId={selectedOrgId}
+          selectedOrgName={selectedOrgName}
+          ctxWorkspaceId={ctxWorkspaceId}
+          exitToPlatform={exitToPlatform}
+          setPanel={setPanel}
+        />
 
         {/* Scrollable content — chat embed fills column (no outer scroll) */}
         <div style={{
           flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
           overflowY: panel === "chats" && chatWorkspaceId ? "hidden" : "auto",
         }}>
-
-          {panel === "platform" && user?.is_platform_owner && (
-            <PlatformOwnerDashboard
-              orgs={orgs}
-              totalWorkspaces={allWorkspaces.length}
-              workspaceCountByOrg={workspaceCountByOrg}
-              loadingOrgs={loading}
-              onEnterOrganization={(id) => {
-                enterOrganization(id);
-                setPanel("dashboard");
-              }}
-              onOpenOrganizationsNav={() => setPanel("orgs")}
-            />
-          )}
-
-          {panel === "dashboard" && (
-            <OrgDashboardAnalytics
-              organizationId={selectedOrgId || null}
-              orgDisplayName={
-                (selectedOrgId && orgs.find((o) => o.id === selectedOrgId)?.name)
-                ?? "Organization"
-              }
-              onInviteTeam={() => navigate("/admin/team")}
-              onOpenOrganizations={() => setPanel("orgs")}
-            />
-          )}
-
-          {/* ── ORGANIZATIONS panel ── */}
-          {panel === "orgs" && (
-            <div style={{ padding: "22px 26px" }}>
-
-              {/* ── Page header ── */}
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
-                <div>
-                  <div style={{ fontFamily: C.serif, fontSize: 24, color: C.t1, marginBottom: 4 }}>
-                    Organizations
-                  </div>
-                  <div style={{ fontSize: 12, color: C.t2 }}>
-                    Select an organization to view its details, workspaces, and settings.
-                  </div>
-                </div>
-                {user?.is_platform_owner && (
-                  <Btn variant="primary" onClick={() => setShowCreateOrg((v) => !v)}>
-                    {showCreateOrg ? "✕ Cancel" : "+ New Organization"}
-                  </Btn>
-                )}
-              </div>
-
-              {/* ── Error ── */}
-              {err && (
-                <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 8, fontSize: 12, color: C.red, marginBottom: 16 }}>
-                  {err}
-                </div>
-              )}
-
-              {/* ── Create org form ── */}
-              {showCreateOrg && user?.is_platform_owner && (
-                <form onSubmit={createOrg} style={{
-                  background: C.bgCard, border: `1px solid rgba(37,99,235,0.35)`,
-                  borderRadius: 14, padding: "20px 22px", marginBottom: 20,
-                  boxShadow: "0 0 32px rgba(37,99,235,0.08)",
-                }}>
-                  <div style={{ fontFamily: C.serif, fontSize: 18, color: C.t1, marginBottom: 16 }}>
-                    New Organization
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 5, letterSpacing: "0.06em", textTransform: "uppercase" }}>Organization name *</div>
-                      <Input value={newName} onChange={setNewName} placeholder="Acme Corp" required />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: C.t3, marginBottom: 5, letterSpacing: "0.06em", textTransform: "uppercase" }}>URL slug *</div>
-                      <Input
-                        value={newSlug}
-                        onChange={(v) => setNewSlug(v.toLowerCase().replace(/[^a-z0-9-]/g, "-"))}
-                        placeholder="acme-corp"
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="primary" disabled={creating} onClick={() => {}}>
-                      {creating ? "Creating…" : "Create organization"}
-                    </Btn>
-                    <Btn variant="ghost" onClick={() => { setShowCreateOrg(false); setErr(null); }}>Cancel</Btn>
-                  </div>
-                </form>
-              )}
-
-              {/* ── Loading skeleton ── */}
-              {loading && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {[64, 64, 64].map((h, i) => (
-                    <div key={i} style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, height: h, opacity: 0.4 }} />
-                  ))}
-                </div>
-              )}
-
-              {/* ── Empty state ── */}
-              {!loading && orgs.length === 0 && (
-                <div style={{
-                  background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14,
-                  padding: "52px 24px", textAlign: "center",
-                }}>
-                  <div style={{ fontSize: 38, marginBottom: 12 }}>🏢</div>
-                  <div style={{ fontFamily: C.serif, fontSize: 20, color: C.t1, marginBottom: 6 }}>No organizations yet</div>
-                  <div style={{ fontSize: 12, color: C.t2, marginBottom: 20 }}>
-                    {user?.is_platform_owner
-                      ? "Create your first organization to get started."
-                      : "Ask your platform owner to add you to an organization."}
-                  </div>
-                  {user?.is_platform_owner && (
-                    <Btn variant="primary" onClick={() => setShowCreateOrg(true)}>+ Create Organization</Btn>
-                  )}
-                </div>
-              )}
-
-              {/* ── Org selector + detail ── */}
-              {!loading && orgs.length > 0 && (() => {
-                const org = orgs.find((o) => o.id === selectedOrgId);
-                return (
-                  <>
-                    {/* Wide dropdown */}
-                    <div style={{ marginBottom: 24 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: C.t3, marginBottom: 10 }}>
-                        Select Organization
-                      </div>
-                      <WideOrgDropdown
-                        orgs={orgs}
-                        selectedId={selectedOrgId}
-                        allowEmpty={isPlatformOwner && navigationScope === "platform"}
-                        showBackToPlatform={isPlatformOwner && navigationScope === "organization"}
-                        onBackToPlatform={() => {
-                          exitToPlatform();
-                          setPanel("platform");
-                        }}
-                        onSelect={(id) => enterOrganization(id)}
-                      />
-                    </div>
-
-                    {/* Divider */}
-                    <div style={{ height: 1, background: C.bd, marginBottom: 24 }} />
-
-                    {/* Detail sections */}
-                    {!org && isPlatformOwner && navigationScope === "platform" && (
-                      <div style={{ fontSize: 13, color: C.t2, marginBottom: 16 }}>
-                        Choose an organization above to see details, workspaces, and actions for that org.
-                      </div>
-                    )}
-                    {org && (
-                      <>
-                        {orgScreen !== "overview" && (
-                          <button
-                            type="button"
-                            onClick={() => setOrgScreen("overview")}
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 6,
-                              marginBottom: 16,
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              fontSize: 12,
-                              color: C.accent,
-                              fontFamily: C.sans,
-                            }}
-                          >
-                            ← Back to organization
-                          </button>
-                        )}
-                        {orgScreen === "overview" && (
-                          <OrgDetailView
-                            org={org}
-                            workspaces={workspaces}
-                            loadingWs={loadingWs}
-                            onOpenSettings={() => setOrgScreen("settings")}
-                            onUploadClick={setUploadWs}
-                            onWorkspaceCreated={(wsId) => {
-                              api.get<Workspace[]>(`/workspaces/org/${selectedOrgId}`)
-                                .then(({ data }) => {
-                                  setWorkspaces(data);
-                                  setAllWorkspaces((prev) => {
-                                    const rest = prev.filter((w) => w.organization_id !== selectedOrgId);
-                                    return [...rest, ...data];
-                                  });
-                                })
-                                .catch(() => {});
-                              if (wsId) { setJumpToWsId(wsId); setPanel("workspaces"); }
-                            }}
-                            onGoToWorkspace={(wsId) => {
-                              if (wsId) setJumpToWsId(wsId);
-                              setPanel("workspaces");
-                            }}
-                          />
-                        )}
-                        {orgScreen === "settings" && (
-                          <OrganizationSettingsPanel
-                            org={org}
-                            isPlatformOwner={!!user?.is_platform_owner}
-                            showDangerZone={!!user?.is_platform_owner}
-                            onSaved={(updated) => {
-                              setOrgs((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-                            }}
-                            onOrgDeleted={async () => {
-                              setErr(null);
-                              await loadOrgs();
-                              exitToPlatform();
-                              setPanel("platform");
-                              setWorkspacesReloadNonce((n) => n + 1);
-                            }}
-                          />
-                        )}
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          )}
-
-          {/* ── WORKSPACES panel ── */}
-          {panel === "workspaces" && (
-            <AllWorkspacesPanel
-              orgs={orgs}
-              allWorkspaces={scopedWorkspaces}
-              loadingWs={loadingWs}
-              initialWsId={ctxWorkspaceId ?? jumpToWsId}
-              isPlatformOwner={!!isPlatformOwner}
-              onWorkspaceDeleted={async () => {
-                setWorkspacesReloadNonce((n) => n + 1);
-                setActiveWorkspaceContext(null, null);
-              }}
-              onSelectedWorkspaceChange={setActiveWorkspaceContext}
-              onLaunchChat={(wsId) => {
-                setChatWorkspaceId(wsId);
-                setPanel("chats");
-              }}
-              onNavigateToTeam={() => setPanel("team")}
-              onNavigateToConnectors={() => setPanel("connectors")}
-              onWorkspaceUpdated={(updated) => {
-                setAllWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
-                if (updated.organization_id) {
-                  setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
-                }
-              }}
-            />
-          )}
-
-          {/* ── CHATS panel — list or embedded chat (platform sidebar always visible) ── */}
-          {panel === "chats" && chatWorkspaceId && (
-            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <DashboardPage
-                key={chatWorkspaceId}
-                embedded
-                embeddedBright={brightMode}
-                workspaceId={chatWorkspaceId}
-                onEmbeddedWorkspaceChange={onEmbeddedChatWorkspaceChange}
-              />
-            </div>
-          )}
-          {panel === "chats" && !chatWorkspaceId && (
-            <ChatsPanel
-              allWorkspaces={scopedWorkspaces}
-              initialWsId={jumpToChatWsId}
-              onOpenChat={(id) => setChatWorkspaceId(id)}
-            />
-          )}
-
-          {/* ── CONNECTORS panel ── */}
-          {panel === "connectors" && (
-            <ConnectorsPanel orgs={orgs} workspaceScope={workspaceInContext} />
-          )}
-
-          {/* ── TEAM MANAGEMENT panel ── */}
-          {panel === "team" && (
-            <TeamManagementPanel
-              initialOrgId={(workspaceInContext?.organization_id || selectedOrgId) || undefined}
-              scopedWorkspaceId={workspaceInContext?.id ?? null}
-              scopedWorkspaceName={workspaceInContext?.name ?? null}
-            />
-          )}
-
-          {/* ── KNOWLEDGE ANALYTICS panel ── */}
-          {panel === "analytics" && (
-            <KnowledgeAnalyticsPanel
-              workspaceName={workspaceInContext?.name ?? null}
-              organizationName={
-                selectedOrgId ? orgs.find((o) => o.id === selectedOrgId)?.name ?? null : null
-              }
-            />
-          )}
-
-          {/* ── DOCUMENTS panel ── */}
-          {panel === "docs" && (
-            <DocumentsPanel orgs={orgs} scopeOrganizationId={selectedOrgId || null} />
-          )}
-
-          {/* ── BILLING panel ── */}
-          {panel === "billing" && <BillingPanel />}
+          <HomePanelRouter
+            panel={panel}
+            user={user}
+            orgs={orgs}
+            allWorkspaces={allWorkspaces}
+            workspaceCountByOrg={workspaceCountByOrg}
+            loading={loading}
+            enterOrganization={enterOrganization}
+            setPanel={setPanel}
+            selectedOrgId={selectedOrgId}
+            navigate={navigate}
+            showCreateOrg={showCreateOrg}
+            setShowCreateOrg={setShowCreateOrg}
+            err={err}
+            createOrg={createOrg}
+            newName={newName}
+            setNewName={setNewName}
+            newSlug={newSlug}
+            setNewSlug={setNewSlug}
+            newOrgChatProv={newOrgChatProv}
+            setNewOrgChatProv={setNewOrgChatProv}
+            newOrgChatModel={newOrgChatModel}
+            setNewOrgChatModel={setNewOrgChatModel}
+            newOrgOllamaBase={newOrgOllamaBase}
+            setNewOrgOllamaBase={setNewOrgOllamaBase}
+            isPlatformOwner={isPlatformOwner}
+            navigationScope={navigationScope}
+            exitToPlatform={exitToPlatform}
+            orgScreen={orgScreen}
+            setOrgScreen={setOrgScreen}
+            workspaces={workspaces}
+            loadingWs={loadingWs}
+            setUploadWs={setUploadWs}
+            api={api}
+            AllWorkspacesPanel={AllWorkspacesPanel}
+            OrgDetailView={OrgDetailView}
+            creating={creating}
+            setWorkspaces={setWorkspaces}
+            setAllWorkspaces={setAllWorkspaces}
+            setJumpToWsId={setJumpToWsId}
+            setWorkspacesReloadNonce={setWorkspacesReloadNonce}
+            loadOrgs={loadOrgs}
+            setActiveWorkspaceContext={setActiveWorkspaceContext}
+            scopedWorkspaces={scopedWorkspaces}
+            ctxWorkspaceId={ctxWorkspaceId}
+            jumpToWsId={jumpToWsId}
+            chatWorkspaceId={chatWorkspaceId}
+            setChatWorkspaceId={setChatWorkspaceId}
+            brightMode={brightMode}
+            onEmbeddedChatWorkspaceChange={onEmbeddedChatWorkspaceChange}
+            ChatsPanel={ChatsPanel}
+            jumpToChatWsId={jumpToChatWsId}
+            ConnectorsPanel={ConnectorsPanel}
+            workspaceInContext={workspaceInContext}
+            BillingPanel={BillingPanel}
+            AuditPanel={AuditPanel}
+            workspaceScopeIds={workspaceScopeIds}
+            canManageOrgSettings={hasOrgOwnerAccess}
+            canManageWorkspaceSettings={hasWorkspaceAdminAccess}
+            SettingsPanel={SettingsPanel}
+            uploadWs={uploadWs}
+            UploadModal={UploadModal}
+            setOrgs={setOrgs}
+            setErr={setErr}
+          />
         </div>
       </div>
-
-      {/* ── Upload modal ── */}
-      {uploadWs && <UploadModal ws={uploadWs} onClose={() => setUploadWs(null)} />}
 
       <style>{`
         @keyframes progress {

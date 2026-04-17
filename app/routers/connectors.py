@@ -13,11 +13,21 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.limiter import limiter
-from app.models import AuditAction, IntegrationConnector, Organization, OrganizationMembership, User
-from app.routers.organizations import _require_org_owner, _write_audit_log
+from app.models import (
+    AuditAction,
+    IntegrationConnector,
+    Organization,
+    OrganizationMembership,
+    OrgMembershipRole,
+    User,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceMemberRole,
+)
+from app.routers.organizations import _write_audit_log
 from app.services.billing import ensure_connector_slot, invalidate_plan_cache, register_connector_integration
 from app.services.nango_client import normalize_connector_type_for_storage
-from app.services.admin_metrics import list_connectors_for_org
+from app.services.metrics import list_connectors_for_org
 from app.services.permissions import sync_permissions
 from app.services.rate_limits import enforce_connector_sync_limit
 from app.services.sync_orchestrator import run_connector_sync
@@ -53,24 +63,65 @@ def list_organization_connectors(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[dict]:
-    """Connector rows for workspace/admin UIs — any org member may read (same access as activate)."""
-    _require_org_access_for_connectors(db, organization_id, user)
+    """Connector rows for workspace/admin UIs."""
+    _require_connector_view_access(db, organization_id, user)
     return list_connectors_for_org(db, organization_id)
 
 
-def _require_org_access_for_connectors(db: Session, org_id: UUID, user: User) -> None:
-    """Org members may use connectors; platform owners may act on any org that exists."""
+def _org_membership_role(db: Session, org_id: UUID, user_id: UUID) -> str | None:
+    row = (
+        db.query(OrganizationMembership)
+        .filter(OrganizationMembership.organization_id == org_id, OrganizationMembership.user_id == user_id)
+        .one_or_none()
+    )
+    return row.role if row is not None else None
+
+
+def _has_workspace_role_in_org(db: Session, org_id: UUID, user_id: UUID, allowed_roles: set[str]) -> bool:
+    row = (
+        db.query(WorkspaceMember)
+        .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+        .filter(
+            Workspace.organization_id == org_id,
+            WorkspaceMember.user_id == user_id,
+            WorkspaceMember.role.in_(allowed_roles),
+        )
+        .first()
+    )
+    return row is not None
+
+
+def _require_connector_view_access(db: Session, org_id: UUID, user: User) -> None:
+    """View connector state: platform owner, org owner, workspace admin, or editor."""
     if user.is_platform_owner:
         if db.get(Organization, org_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
         return
-    m = (
-        db.query(OrganizationMembership)
-        .filter(OrganizationMembership.organization_id == org_id, OrganizationMembership.user_id == user.id)
-        .first()
-    )
-    if m is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this organization")
+    role = _org_membership_role(db, org_id, user.id)
+    if role == OrgMembershipRole.org_owner.value:
+        return
+    if _has_workspace_role_in_org(
+        db,
+        org_id,
+        user.id,
+        {WorkspaceMemberRole.workspace_admin.value, WorkspaceMemberRole.editor.value},
+    ):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector read access requires admin or editor role")
+
+
+def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> None:
+    """Manage connectors: platform owner, org owner, or workspace admin."""
+    if user.is_platform_owner:
+        if db.get(Organization, org_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+        return
+    role = _org_membership_role(db, org_id, user.id)
+    if role == OrgMembershipRole.org_owner.value:
+        return
+    if _has_workspace_role_in_org(db, org_id, user.id, {WorkspaceMemberRole.workspace_admin.value}):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector management requires workspace admin or higher")
 
 
 @router.post("/activate")
@@ -89,7 +140,7 @@ def activate_connector(
     connector_id_out: str | None = None
     if body.organization_id:
         integration_norm = normalize_connector_type_for_storage(body.integration_id)
-        _require_org_access_for_connectors(db, body.organization_id, user)
+        _require_connector_manage_access(db, body.organization_id, user)
         enforce_connector_sync_limit(request, db, body.organization_id, user)
         try:
             ensure_connector_slot(db, body.organization_id)
@@ -148,11 +199,11 @@ def delete_integration_connector(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    """Org owners / platform owners: remove the integration row (does not delete ingested documents)."""
+    """Org owners/workspace admins/platform owners: remove integration row (does not delete ingested docs)."""
     conn = db.get(IntegrationConnector, connector_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
-    _require_org_owner(db, conn.organization_id, user)
+    _require_connector_manage_access(db, conn.organization_id, user)
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -180,7 +231,7 @@ def sync_connector_now(
     conn = db.get(IntegrationConnector, connector_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
-    _require_org_access_for_connectors(db, conn.organization_id, user)
+    _require_connector_manage_access(db, conn.organization_id, user)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
     return run_connector_sync(db, connector_id, full_sync=full_sync)
 
@@ -197,7 +248,7 @@ def sync_connector_permissions(
     if not body.items:
         return {"updated": 0}
     org_id = body.items[0].organization_id
-    _require_org_access_for_connectors(db, org_id, user)
+    _require_connector_manage_access(db, org_id, user)
     enforce_connector_sync_limit(request, db, org_id, user)
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)

@@ -19,6 +19,7 @@ export type UserMe = {
   full_name: string | null;
   is_platform_owner: boolean;
   org_ids_as_owner: string[];
+  org_ids_as_workspace_admin: string[];
 };
 
 type AuthState = {
@@ -66,7 +67,11 @@ export function AuthProvider({
     const hadProfileAlready = userRef.current !== null;
     try {
       const { data } = await api.get<UserMe>("/auth/me");
-      setUser({ ...data, org_ids_as_owner: data.org_ids_as_owner ?? [] });
+      setUser({
+        ...data,
+        org_ids_as_owner: data.org_ids_as_owner ?? [],
+        org_ids_as_workspace_admin: data.org_ids_as_workspace_admin ?? [],
+      });
       setSessionError(null);
     } catch (e) {
       let msg: string | null = null;
@@ -128,7 +133,11 @@ export function AuthProvider({
     localStorage.setItem("skp_token", data.access_token);
     setToken(data.access_token);
     const me = await api.get<UserMe>("/auth/me");
-    setUser({ ...me.data, org_ids_as_owner: me.data.org_ids_as_owner ?? [] });
+    setUser({
+      ...me.data,
+      org_ids_as_owner: me.data.org_ids_as_owner ?? [],
+      org_ids_as_workspace_admin: me.data.org_ids_as_workspace_admin ?? [],
+    });
     setSessionError(null);
   }, []);
 

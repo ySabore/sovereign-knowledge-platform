@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _redis: redis.Redis | None = None
 
 CONNECTOR_SYNC_PER_HOUR = 10
-ADMIN_API_PER_HOUR = 1000
+PRIVILEGED_READ_API_PER_HOUR = 1000
 
 
 def _client() -> redis.Redis | None:
@@ -170,8 +170,8 @@ def enforce_connector_sync_limit(request: Request, db: Session, organization_id:
         logger.warning("rate limit redis error: %s", exc)
 
 
-def enforce_admin_api_limit(request: Request, user: User) -> None:
-    """Limiter for privileged read endpoints (e.g. /admin/metrics/summary)."""
+def enforce_privileged_read_api_limit(request: Request, user: User) -> None:
+    """Limiter for privileged read endpoints (e.g. /metrics/summary)."""
     _ = request
     if user.is_platform_owner:
         return
@@ -179,9 +179,9 @@ def enforce_admin_api_limit(request: Request, user: User) -> None:
     if r is None:
         return
     now = datetime.now(timezone.utc)
-    key = f"rl:user:{user.id}:admin:hour:{now.strftime('%Y%m%d%H')}"
+    key = f"rl:user:{user.id}:privileged:read:hour:{now.strftime('%Y%m%d%H')}"
     try:
-        _enforce_bucket(r, key, ADMIN_API_PER_HOUR, 3600)
+        _enforce_bucket(r, key, PRIVILEGED_READ_API_PER_HOUR, 3600)
     except HTTPException:
         raise
     except redis.RedisError as exc:

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.auth.security import create_access_token, verify_password
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import OrganizationMembership, OrgMembershipRole, User
+from app.models import OrganizationMembership, OrgMembershipRole, User, Workspace, WorkspaceMember, WorkspaceMemberRole
 from app.schemas.auth import LoginRequest, TokenResponse, UserPublic
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -32,10 +32,22 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) ->
         .all()
     )
     org_ids_as_owner = [row[0] for row in owner_rows]
+    ws_admin_rows = (
+        db.query(Workspace.organization_id)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
+        .filter(
+            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.role == WorkspaceMemberRole.workspace_admin.value,
+        )
+        .distinct()
+        .all()
+    )
+    org_ids_as_workspace_admin = [row[0] for row in ws_admin_rows]
     return UserPublic(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         is_platform_owner=user.is_platform_owner,
         org_ids_as_owner=org_ids_as_owner,
+        org_ids_as_workspace_admin=org_ids_as_workspace_admin,
     )

@@ -3,7 +3,8 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,6 +14,7 @@ from app.models import (
     AuditAction,
     AuditLog,
     ChatSession,
+    Document,
     Organization,
     OrganizationMembership,
     OrganizationInvite,
@@ -24,8 +26,10 @@ from app.models import (
     WorkspaceMemberRole,
 )
 from app.services.billing import ensure_seat_available
+from app.services.metrics import list_audit_events_for_org, list_documents_for_org
 from app.services.field_encryption import encrypt_org_secret
 from app.services.resource_cleanup import delete_organization_cascade, delete_workspace_cascade
+from app.services.rate_limits import enforce_privileged_read_api_limit
 from app.services.workspace_access import resolve_workspace_for_user
 from app.schemas.auth import (
     OrganizationCreate,
@@ -35,6 +39,7 @@ from app.schemas.auth import (
     OrganizationInviteCreate,
     OrganizationInviteIssueResponse,
     OrganizationInvitePublic,
+    OrganizationOverviewStats,
     OrganizationPublic,
     OrganizationUpdate,
     WorkspaceCreate,
@@ -184,6 +189,9 @@ def _require_workspace_admin(db: Session, workspace_id: UUID, user: User) -> Wor
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
     if user.is_platform_owner:
         return workspace
+    org_membership = _get_org_membership(db, workspace.organization_id, user.id)
+    if org_membership is not None and org_membership.role == OrgMembershipRole.org_owner.value:
+        return workspace
     membership = (
         db.query(WorkspaceMember)
         .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id)
@@ -192,6 +200,20 @@ def _require_workspace_admin(db: Session, workspace_id: UUID, user: User) -> Wor
     if membership.role != WorkspaceMemberRole.workspace_admin.value:
         raise HTTPException(status_code=403, detail="Workspace admin role required")
     return workspace
+
+
+def _workspace_admin_workspace_ids_in_org(db: Session, org_id: UUID, user_id: UUID) -> list[UUID]:
+    rows = (
+        db.query(WorkspaceMember.workspace_id)
+        .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+        .filter(
+            Workspace.organization_id == org_id,
+            WorkspaceMember.user_id == user_id,
+            WorkspaceMember.role == WorkspaceMemberRole.workspace_admin.value,
+        )
+        .all()
+    )
+    return [row[0] for row in rows]
 
 
 def _count_workspace_admins(db: Session, workspace_id: UUID) -> int:
@@ -254,6 +276,26 @@ def create_organization(
         tenant_key=secrets.token_urlsafe(16),
         status=OrgStatus.active.value,
     )
+    if body.preferred_chat_provider is not None:
+        raw_p = body.preferred_chat_provider
+        s = str(raw_p).strip().lower()
+        if s in ("", "inherit", "platform", "default"):
+            org.preferred_chat_provider = None
+        elif s in ("extractive", "ollama", "openai", "anthropic"):
+            org.preferred_chat_provider = s
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Invalid preferred_chat_provider. Use extractive, ollama, openai, anthropic, "
+                    "or omit for platform default."
+                ),
+            )
+    if body.preferred_chat_model is not None:
+        org.preferred_chat_model = (str(body.preferred_chat_model) or "").strip() or None
+    if body.ollama_base_url is not None:
+        org.ollama_base_url = (str(body.ollama_base_url).strip() or None)
+
     db.add(org)
     db.flush()
     db.add(
@@ -566,6 +608,81 @@ def get_organization(
     return org
 
 
+@router.get("/{org_id}/overview-stats", response_model=OrganizationOverviewStats)
+def get_organization_overview_stats(
+    org_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> OrganizationOverviewStats:
+    """Member and indexed document counts for org overview UI (not restricted to org_owner)."""
+    _require_org_membership(db, org_id, user)
+    if db.get(Organization, org_id) is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    member_count = (
+        db.query(func.count(OrganizationMembership.id))
+        .filter(OrganizationMembership.organization_id == org_id)
+        .scalar()
+        or 0
+    )
+    document_count = (
+        db.query(func.count(Document.id)).filter(Document.organization_id == org_id).scalar() or 0
+    )
+    return OrganizationOverviewStats(member_count=int(member_count), document_count=int(document_count))
+
+
+@router.get("/{org_id}/documents")
+def list_organization_documents(
+    org_id: UUID,
+    request: Request,
+    workspace_id: UUID | None = Query(default=None),
+    q: str | None = Query(default=None, description="Optional filename/source search"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    _require_org_owner(db, org_id, user)
+    enforce_privileged_read_api_limit(request, user)
+    return list_documents_for_org(
+        db,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        q=q,
+        limit=limit,
+    )
+
+
+@router.get("/{org_id}/audit")
+def list_organization_audit(
+    org_id: UUID,
+    request: Request,
+    action: str | None = Query(default=None),
+    workspace_id: UUID | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    membership = _get_org_membership(db, org_id, user.id)
+    is_org_owner = user.is_platform_owner or (
+        membership is not None and membership.role == OrgMembershipRole.org_owner.value
+    )
+    workspace_scope_ids: list[UUID] | None = None
+    if not is_org_owner:
+        workspace_scope_ids = _workspace_admin_workspace_ids_in_org(db, org_id, user.id)
+        if not workspace_scope_ids:
+            raise HTTPException(status_code=403, detail="Workspace admin or org owner role required")
+        if workspace_id is not None and workspace_id not in workspace_scope_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to view audit for this workspace")
+    enforce_privileged_read_api_limit(request, user)
+    return list_audit_events_for_org(
+        db,
+        organization_id=org_id,
+        action=action,
+        workspace_id=workspace_id if is_org_owner else None,
+        workspace_ids=workspace_scope_ids if not is_org_owner else None,
+        limit=limit,
+    )
+
+
 @router.get("/{org_id}/members", response_model=list[OrganizationMemberPublic])
 def list_organization_members(
     org_id: UUID,
@@ -642,6 +759,7 @@ def update_organization(
     cloud_llm_owner_fields = {
         "openai_api_key",
         "anthropic_api_key",
+        "cohere_api_key",
         "openai_api_base_url",
         "anthropic_api_base_url",
     }
@@ -708,12 +826,45 @@ def update_organization(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Server is not configured to store organization API keys (set ORG_LLM_FERNET_KEY).",
                 ) from None
+    if "cohere_api_key" in patch:
+        raw_key = patch["cohere_api_key"]
+        if raw_key is None or (isinstance(raw_key, str) and not str(raw_key).strip()):
+            org.cohere_api_key_encrypted = None
+        else:
+            try:
+                org.cohere_api_key_encrypted = encrypt_org_secret(str(raw_key))
+            except RuntimeError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Server is not configured to store organization API keys (set ORG_LLM_FERNET_KEY).",
+                ) from None
     if "openai_api_base_url" in patch:
         raw_u = patch["openai_api_base_url"]
         org.openai_api_base_url = None if raw_u is None else (str(raw_u).strip() or None)
     if "anthropic_api_base_url" in patch:
         raw_u = patch["anthropic_api_base_url"]
         org.anthropic_api_base_url = None if raw_u is None else (str(raw_u).strip() or None)
+    if "ollama_base_url" in patch:
+        raw_u = patch["ollama_base_url"]
+        org.ollama_base_url = None if raw_u is None else (str(raw_u).strip() or None)
+    if "retrieval_strategy" in patch:
+        raw_rs = patch["retrieval_strategy"]
+        if raw_rs is None:
+            org.retrieval_strategy = None
+        else:
+            s = str(raw_rs).strip().lower()
+            if s in ("", "inherit", "platform", "default"):
+                org.retrieval_strategy = None
+            elif s in ("heuristic", "hybrid", "rerank"):
+                org.retrieval_strategy = s
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid retrieval_strategy. Use heuristic, hybrid, rerank, or null for platform default.",
+                )
+    if "use_hosted_rerank" in patch:
+        raw_ur = patch["use_hosted_rerank"]
+        org.use_hosted_rerank = bool(raw_ur) if raw_ur is not None else False
 
     _write_audit_log(
         db,
@@ -849,10 +1000,24 @@ def list_my_workspaces(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Workspace]:
+    if user.is_platform_owner:
+        rows = db.query(Workspace).order_by(Workspace.created_at.asc()).all()
+        return list(rows)
     rows = (
         db.query(Workspace)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .filter(WorkspaceMember.user_id == user.id)
+        .outerjoin(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
+        .outerjoin(
+            OrganizationMembership,
+            OrganizationMembership.organization_id == Workspace.organization_id,
+        )
+        .filter(
+            (WorkspaceMember.user_id == user.id)
+            | (
+                (OrganizationMembership.user_id == user.id)
+                & (OrganizationMembership.role == OrgMembershipRole.org_owner.value)
+            )
+        )
+        .distinct()
         .order_by(Workspace.created_at.asc())
         .all()
     )

@@ -25,7 +25,7 @@ Ensure backend `CORS_ORIGINS` includes your UI origin when not using the Vite pr
 | Path | Purpose |
 |------|---------|
 | `/dashboard/:workspaceId` | Main chat UI (composer, streaming via `POST /api/chat`, source drawer). |
-| `/admin`, `/admin/connectors` | Admin dashboards (platform owner or Clerk org admin). |
+| `/home?panel=billing`, `/home?panel=audit`, `/home?panel=settings` | Enterprise panels inside the main shell (platform owner or org owner). |
 | `/workspaces/:id` | Redirects to `/dashboard/:id`. |
 
 Streaming uses **SSE** from the FastAPI RAG pipeline (not the Vercel AI SDK protocol). tRPC is not in this repo; use REST + typed clients until a BFF exists.
