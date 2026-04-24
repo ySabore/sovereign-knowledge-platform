@@ -50,8 +50,17 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)) -> dic
             raise
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature") from exc
 
-    etype = event.get("type")
-    obj = event.get("data", {}).get("object") or {}
+    etype = getattr(event, "type", None)
+    data = getattr(event, "data", None)
+    obj_raw = getattr(data, "object", None) if data is not None else None
+    if hasattr(obj_raw, "to_dict_recursive"):
+        obj = obj_raw.to_dict_recursive()
+    elif hasattr(obj_raw, "to_dict"):
+        obj = obj_raw.to_dict()
+    elif isinstance(obj_raw, dict):
+        obj = obj_raw
+    else:
+        obj = {}
 
     try:
         if etype == "checkout.session.completed":

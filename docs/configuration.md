@@ -6,6 +6,8 @@ All server options are loaded from **environment variables** (and optionally `.e
 
 **Safe runtime view (no secrets):** `GET /config/public` (disable with `EXPOSE_PUBLIC_CONFIG=false`).
 
+**Stripe billing (Checkout, Customer Portal, webhooks):** step-by-step guide in [configuration/STRIPE.md](configuration/STRIPE.md). For Docker, keep Stripe values in runtime `.env` (not `.env.example`) because compose passes env vars from `.env` into `api`.
+
 ---
 
 ## Runtime & API metadata
