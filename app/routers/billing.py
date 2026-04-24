@@ -30,6 +30,7 @@ from app.services.billing import (
     list_plan_catalog,
     normalize_plan_key,
     stripe_configured,
+    write_billing_audit_event,
 )
 from app.services.rate_limits import get_org_query_month_usage
 
@@ -135,6 +136,19 @@ def post_billing_checkout(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_checkout_started",
+        target_type="billing_checkout",
+        actor_user=user,
+        metadata={
+            "price_id": body.price_id,
+            "checkout_session_id": out.get("session_id"),
+            "stripe_customer_id": org.stripe_customer_id,
+        },
+    )
+    db.commit()
     return BillingCheckoutResponse(**out)
 
 
@@ -158,4 +172,16 @@ def post_billing_portal(
         out = create_portal_session(db, org=org, return_url=body.return_url.strip())
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_portal_opened",
+        target_type="billing_portal",
+        actor_user=user,
+        metadata={
+            "return_url": body.return_url.strip(),
+            "stripe_customer_id": org.stripe_customer_id,
+        },
+    )
+    db.commit()
     return BillingPortalResponse(**out)

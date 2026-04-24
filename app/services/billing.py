@@ -17,7 +17,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Organization, OrganizationConnector, OrganizationMembership, OrgMembershipRole, User, utcnow
+from app.models import AuditLog, Organization, OrganizationConnector, OrganizationMembership, OrgMembershipRole, User, utcnow
+from app.services.audit_actor import infer_actor_role
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,33 @@ def org_owner_email(db: Session, organization_id: UUID) -> str | None:
         .first()
     )
     return str(row[0]) if row else None
+
+
+def write_billing_audit_event(
+    db: Session,
+    *,
+    organization_id: UUID,
+    action: str,
+    target_type: str,
+    actor_user: User | None = None,
+    actor_role: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    resolved_role = actor_role
+    if resolved_role is None and actor_user is not None:
+        resolved_role = infer_actor_role(db, actor_user, organization_id=organization_id, workspace_id=None)
+    db.add(
+        AuditLog(
+            actor_user_id=actor_user.id if actor_user is not None else None,
+            actor_role=resolved_role,
+            organization_id=organization_id,
+            workspace_id=None,
+            action=action,
+            target_type=target_type,
+            target_id=None,
+            metadata_json=metadata or {},
+        )
+    )
 
 
 def _is_missing_subscription_error(exc: Exception) -> bool:
@@ -480,6 +508,20 @@ def handle_checkout_session_completed(db: Session, session: dict[str, Any]) -> N
     else:
         invalidate_plan_cache(org.id)
 
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_checkout_completed",
+        target_type="billing_checkout",
+        actor_role="system",
+        metadata={
+            "source": "stripe_webhook",
+            "checkout_session_id": session.get("id"),
+            "stripe_customer_id": org.stripe_customer_id,
+            "stripe_subscription_id": sub_id if isinstance(sub_id, str) else None,
+            "plan_after": org.plan,
+        },
+    )
     db.commit()
 
 
@@ -502,6 +544,20 @@ def handle_subscription_updated(db: Session, sub: dict[str, Any]) -> None:
     if org is None:
         return
     apply_subscription_object_to_org(db, org, sub)
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_subscription_updated",
+        target_type="billing_subscription",
+        actor_role="system",
+        metadata={
+            "source": "stripe_webhook",
+            "stripe_subscription_id": sub.get("id"),
+            "stripe_customer_id": sub.get("customer"),
+            "status": sub.get("status"),
+            "plan_after": org.plan,
+        },
+    )
     db.commit()
 
 
@@ -520,6 +576,19 @@ def handle_subscription_deleted(db: Session, sub: dict[str, Any]) -> None:
     org.stripe_subscription_id = None
     org.billing_grace_until = None
     invalidate_plan_cache(org.id)
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_subscription_deleted",
+        target_type="billing_subscription",
+        actor_role="system",
+        metadata={
+            "source": "stripe_webhook",
+            "stripe_subscription_id": sub_id,
+            "status": sub.get("status"),
+            "plan_after": org.plan,
+        },
+    )
     db.commit()
     logger.info("Subscription %s canceled; org %s downgraded to free (notify user via email — TODO)", sub_id, org.id)
 
@@ -537,6 +606,19 @@ def handle_invoice_payment_failed(db: Session, invoice: dict[str, Any]) -> None:
         return
     org.billing_grace_until = utcnow() + timedelta(days=7)
     invalidate_plan_cache(org.id)
+    write_billing_audit_event(
+        db,
+        organization_id=org.id,
+        action="billing_invoice_payment_failed",
+        target_type="billing_invoice",
+        actor_role="system",
+        metadata={
+            "source": "stripe_webhook",
+            "stripe_invoice_id": invoice.get("id"),
+            "stripe_subscription_id": sub_id,
+            "billing_grace_until": org.billing_grace_until.isoformat() if org.billing_grace_until else None,
+        },
+    )
     db.commit()
     logger.warning(
         "invoice.payment_failed for org %s — grace until %s (email notify TODO)",
