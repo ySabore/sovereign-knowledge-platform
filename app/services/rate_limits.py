@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _redis: redis.Redis | None = None
 
 CONNECTOR_SYNC_PER_HOUR = max(1, int(settings.connector_sync_per_hour))
-PRIVILEGED_READ_API_PER_HOUR = 1000
+PRIVILEGED_READ_API_PER_HOUR = max(1, int(settings.privileged_read_api_per_hour))
 
 
 def _client() -> redis.Redis | None:

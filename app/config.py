@@ -83,6 +83,12 @@ class Settings(BaseSettings):
         le=100000,
         description="Per-organization connector sync invocations allowed each UTC hour",
     )
+    privileged_read_api_per_hour: int = Field(
+        default=1000,
+        ge=1,
+        le=1000000,
+        description="Per-user hourly cap for privileged read endpoints (metrics/admin summary/audit list)",
+    )
     rate_limit_redis_enabled: bool = Field(
         default=True,
         description="Use Redis (Upstash-compatible rediss://) for org plan tier limits on query/sync/admin routes",

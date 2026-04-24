@@ -212,6 +212,35 @@ def org_owner_email(db: Session, organization_id: UUID) -> str | None:
     return str(row[0]) if row else None
 
 
+def _is_missing_subscription_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "no such subscription" in msg or "resource_missing" in msg
+
+
+def _has_non_canceled_subscription(org: Organization) -> bool:
+    sub_id = (org.stripe_subscription_id or "").strip()
+    if not sub_id or not stripe_configured():
+        return False
+    _configure_stripe()
+    import stripe
+
+    try:
+        sub_obj = stripe.Subscription.retrieve(sub_id)
+    except Exception as exc:
+        if _is_missing_subscription_error(exc):
+            logger.warning(
+                "stripe subscription missing for org %s (subscription=%s)",
+                getattr(org, "id", "<unknown>"),
+                sub_id,
+            )
+            return False
+        # Fail closed on transient Stripe errors to avoid creating duplicate subscriptions.
+        raise RuntimeError("Could not verify existing Stripe subscription state; try again shortly.") from exc
+    sub = sub_obj.to_dict() if hasattr(sub_obj, "to_dict") else dict(sub_obj)
+    status = str(sub.get("status") or "").strip().lower()
+    return status not in {"canceled", "incomplete_expired"}
+
+
 def create_checkout_session(
     db: Session,
     *,
@@ -222,6 +251,11 @@ def create_checkout_session(
 ) -> dict[str, str]:
     if not stripe_configured():
         raise RuntimeError("Stripe is not configured (STRIPE_SECRET_KEY)")
+    if _has_non_canceled_subscription(org):
+        raise RuntimeError(
+            "This organization already has an active Stripe subscription. "
+            "Use the Billing portal to switch plans instead of starting a new checkout.",
+        )
     email = org_owner_email(db, org.id)
     if not email:
         raise RuntimeError("No org owner email found for Checkout customer_email")
@@ -274,6 +308,11 @@ def _unix_to_iso(value: Any) -> str | None:
     return datetime.fromtimestamp(n, tz=timezone.utc).isoformat()
 
 
+def _is_missing_customer_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "no such customer" in msg or "resource_missing" in msg
+
+
 def list_invoice_history(*, org: Organization, limit: int = 20) -> list[dict[str, Any]]:
     """Return Stripe invoice rows for a customer; empty when unavailable."""
     if not stripe_configured() or not org.stripe_customer_id:
@@ -282,7 +321,17 @@ def list_invoice_history(*, org: Organization, limit: int = 20) -> list[dict[str
     import stripe
 
     out: list[dict[str, Any]] = []
-    items = stripe.Invoice.list(customer=org.stripe_customer_id, limit=max(1, min(limit, 100)))
+    try:
+        items = stripe.Invoice.list(customer=org.stripe_customer_id, limit=max(1, min(limit, 100)))
+    except Exception as exc:
+        if _is_missing_customer_error(exc):
+            logger.warning(
+                "stripe customer missing for org %s (customer=%s): returning empty invoice list",
+                getattr(org, "id", "<unknown>"),
+                org.stripe_customer_id,
+            )
+            return []
+        raise
     for inv_obj in items.auto_paging_iter():
         inv = inv_obj.to_dict() if hasattr(inv_obj, "to_dict") else dict(inv_obj)
         period_start = None

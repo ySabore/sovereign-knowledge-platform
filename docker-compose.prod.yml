@@ -89,6 +89,11 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:8080}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_JSON: ${LOG_JSON:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      RATE_LIMIT_REDIS_ENABLED: ${RATE_LIMIT_REDIS_ENABLED:-true}
+      CONNECTOR_SYNC_PER_HOUR: ${CONNECTOR_SYNC_PER_HOUR:-60}
+      PRIVILEGED_READ_API_PER_HOUR: ${PRIVILEGED_READ_API_PER_HOUR:-1000}
       DOCUMENT_STORAGE_ROOT: /app/data/documents
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       # Chat can use per-org ollama_base_url (Org settings) to override ANSWER_GENERATION_OLLAMA_BASE_URL.

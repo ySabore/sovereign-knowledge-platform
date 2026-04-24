@@ -145,8 +145,8 @@ def main() -> None:
             tenant_key=secrets.token_urlsafe(16),
             status=OrgStatus.active.value,
             plan="business",
-            stripe_customer_id="cus_seed_sterling_vale_demo",
-            stripe_subscription_id="sub_seed_sterling_vale_demo",
+            stripe_customer_id=None,
+            stripe_subscription_id=None,
             billing_grace_until=None,
         )
         db.add(org)

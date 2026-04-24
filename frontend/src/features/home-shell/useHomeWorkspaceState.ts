@@ -7,6 +7,7 @@ type UseHomeWorkspaceStateArgs = {
   selectedOrgId: string;
   userIsPlatformOwner: boolean;
   memberChatOnly: boolean;
+  initialPanel: Panel | null;
   api: ApiClient;
   ctxWorkspaceId: string | null | undefined;
   ctxWorkspaceName: string | null | undefined;
@@ -18,12 +19,15 @@ export function useHomeWorkspaceState({
   selectedOrgId,
   userIsPlatformOwner,
   memberChatOnly,
+  initialPanel,
   api,
   ctxWorkspaceId,
   ctxWorkspaceName,
   setActiveWorkspaceContext,
 }: UseHomeWorkspaceStateArgs) {
-  const [panel, setPanel] = useState<Panel>(userIsPlatformOwner ? "platform" : memberChatOnly ? "chats" : "dashboard");
+  const [panel, setPanel] = useState<Panel>(() => (
+    initialPanel ?? (userIsPlatformOwner ? "platform" : memberChatOnly ? "chats" : "dashboard")
+  ));
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
   const [workspaceCountByOrg, setWorkspaceCountByOrg] = useState<Record<string, number>>({});

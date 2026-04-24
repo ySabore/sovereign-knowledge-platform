@@ -1823,10 +1823,24 @@ function BillingPanel() {
         <a href="https://docs.stripe.com/customer-management" target="_blank" rel="noreferrer" style={{ color: C.accent }}>
           Customer Portal
         </a>
-        . Setup:{" "}
-        <Link to="/billing" style={{ color: C.accent, fontWeight: 600 }}>
-          open billing
-        </Link>
+        .{" "}
+        <button
+          type="button"
+          onClick={() => void openPortal()}
+          disabled={!stripeEnabled || portalBusy || !orgId}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            margin: 0,
+            color: C.accent,
+            fontWeight: 600,
+            fontFamily: C.sans,
+            cursor: !stripeEnabled || portalBusy || !orgId ? "default" : "pointer",
+          }}
+        >
+          {portalBusy ? "Opening portal…" : "Open Stripe portal"}
+        </button>
         {" · "}
         <span style={{ color: C.t3 }}>docs/configuration/STRIPE.md</span>
       </div>
@@ -2265,13 +2279,13 @@ function AuditPanel({
     const qUser = searchParams.get("auditUser") ?? "";
     const qWorkspace = searchParams.get("auditWorkspace") ?? "all";
     const qFailures = parseAuditFailures(searchParams.get("auditFailures"));
-    if (action !== qAction) setAction(qAction);
-    if (category !== qCategory) setCategory(qCategory);
-    if (eventSearch !== qEvent) setEventSearch(qEvent);
-    if (userSearch !== qUser) setUserSearch(qUser);
-    if (workspaceFilter !== qWorkspace) setWorkspaceFilter(qWorkspace);
-    if (onlyFailures !== qFailures) setOnlyFailures(qFailures);
-  }, [searchParams, action, category, eventSearch, userSearch, workspaceFilter, onlyFailures]);
+    setAction((prev) => (prev === qAction ? prev : qAction));
+    setCategory((prev) => (prev === qCategory ? prev : qCategory));
+    setEventSearch((prev) => (prev === qEvent ? prev : qEvent));
+    setUserSearch((prev) => (prev === qUser ? prev : qUser));
+    setWorkspaceFilter((prev) => (prev === qWorkspace ? prev : qWorkspace));
+    setOnlyFailures((prev) => (prev === qFailures ? prev : qFailures));
+  }, [searchParams]);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -2911,6 +2925,7 @@ function HomePageContent({
     && (user?.org_ids_as_workspace_admin ?? []).length === 0;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialPanelFromUrl = panelFromQuery(searchParams.get("panel"));
   const {
     navigationScope,
     activeOrganizationId,
@@ -2964,6 +2979,7 @@ function HomePageContent({
     selectedOrgId,
     userIsPlatformOwner: !!user?.is_platform_owner,
     memberChatOnly: isMemberOnlyUser,
+    initialPanel: initialPanelFromUrl,
     api,
     ctxWorkspaceId,
     ctxWorkspaceName,
