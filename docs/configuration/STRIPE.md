@@ -139,3 +139,42 @@ For environment variable names and defaults, see `app/config.py` and [configurat
 - Stripe trigger succeeds but app does not update: ensure `stripe listen --forward-to localhost:8000/webhooks/stripe` is running in the same test account/mode as your keys.
 - Webhook requests not visible in app logs: no listener forwarding or wrong endpoint URL.
 - Signature errors (`Invalid signature`): `STRIPE_WEBHOOK_SECRET` does not match the currently running listener/endpoint secret.
+
+---
+
+## 10. Billing operations runbook
+
+### A) Sandbox test checklist (no real card required)
+
+1. Keep Stripe in **Test mode** and use `sk_test_...`.
+2. Ensure prices are test-mode `price_...` values in `STRIPE_PRICE_*`.
+3. Start webhook forwarding:
+   - `stripe listen --forward-to localhost:8000/webhooks/stripe`
+4. In app as org owner/admin:
+   - Billing -> **Choose plan** (first-time subscription)
+   - Use test card `4242 4242 4242 4242`
+   - Open **Billing portal**
+5. Verify:
+   - `checkout.session.completed` delivered with `200`
+   - org has `stripe_customer_id` and `stripe_subscription_id`
+   - invoices appear in Billing screen / portal
+
+### B) Expected org billing lifecycle
+
+1. **First subscription:** Checkout creates customer + subscription.
+2. **Plan changes after subscribe:** use **Billing portal** to switch plan.
+3. **Webhooks sync app state:** subscription updates/deletes/payment failures update org billing fields and plan limits.
+
+Implementation note: checkout is now guarded to prevent creating a second active subscription for an org that already has one.
+
+### C) Duplicate subscription cleanup (if legacy duplicates exist)
+
+If a customer already has multiple active subscriptions from earlier test flows:
+
+1. Identify all subscriptions for the customer in Stripe.
+2. Keep only the intended active plan subscription.
+3. Cancel older duplicate subscriptions.
+4. Ensure app DB points to the kept subscription:
+   - `organizations.stripe_subscription_id` = kept subscription id
+   - `organizations.plan` matches the kept plan tier
+5. Refresh Billing and Customer Portal; only one active subscription should remain.
