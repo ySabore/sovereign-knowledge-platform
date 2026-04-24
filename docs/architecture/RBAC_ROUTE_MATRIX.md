@@ -59,6 +59,7 @@ Source of truth:
 | `POST /chat/workspaces/{workspace_id}/upload` | workspace access + in-chat indexing | `PO`, `OO`, assigned `WA/ED/MB` |
 | `GET /chat/workspaces/{workspace_id}/sessions` | workspace access + role-based list policy | `PO`, `OO`, `WA` (all sessions), `ED/MB` (own only) |
 | `GET /chat/sessions/{session_id}` | session access via org owner/workspace membership | `PO`, `OO`, assigned `WA/ED/MB` |
+| `PATCH /chat/sessions/{session_id}` | rename / pin; same guard as `DELETE` chat session | same as delete chat session |
 | `POST /chat/sessions/{session_id}/messages` | session access | `PO`, `OO`, assigned `WA/ED/MB` |
 | `POST /chat/sessions/{session_id}/messages/stream` | session access | `PO`, `OO`, assigned `WA/ED/MB` |
 | `PUT /chat/messages/{message_id}/feedback` | session access + assistant-only feedback target | `PO`, `OO`, assigned `WA/ED/MB` |

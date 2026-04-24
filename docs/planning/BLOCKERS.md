@@ -1,88 +1,73 @@
 # BLOCKERS.md — Sovereign Knowledge Platform
 
-*Last updated: 2026-04-10 4:00 PM America/New_York*
+*Last updated: 2026-04-21 11:55 PM America/New_York*
 
 ## Active Blockers
 
-### None — All previously identified blockers are RESOLVED or in verification
+### None — no hard blocker currently stops implementation progress
+
+The repo is actively moving on backend + frontend work, and the test suite is green. The current risks are coordination, proof, and environment fidelity rather than “cannot proceed” blockers.
 
 ---
 
-## Recently Resolved (2026-04-10 12:14 PM)
+## Current Watch Items (Not Hard Blockers)
 
-### 1. Missing `/admin/*` endpoints
+### 1. Frontend cutover and parity confidence
+- **Status:** Active
+- **Impact:** The codebase has both an active frontend and `frontend-legacy-20260416/`, which implies cutover/parity work is still in flight
+- **Why it matters:** Without disciplined parity checks, UI regressions or accidental capability gaps can hide behind the refactor
+- **Next step:** Keep frontend parity/cutover docs current and verify demo-critical org/workspace/chat/admin flows against the live frontend
 
-**STATUS: RESOLVED**
+### 2. Repo truth drift versus live implementation
+- **Status:** Active
+- **Impact:** Older planning/workspace docs still describe the bootstrap/foundation stage even though the repo is far beyond that phase
+- **Why it matters:** This creates wasted effort and mis-prioritization across Apex/Forge lanes
+- **Next step:** Continue updating repo planning docs and agent-side status docs together whenever the working tree meaningfully shifts
 
-- **Previous assumption:** `/admin/documents/{org_id}` and `/admin/metrics/summary` were missing from the running backend
-- **Reality:** Both endpoints exist in code (`app/routers/admin_metrics.py`) and are registered in the live API
-- **Evidence:**
-  - OpenAPI spec at `http://localhost:8000/openapi.json` shows all `/admin/*` routes
-  - Live API at `http://localhost:8000/health` returns `ok`
-  - Routes confirmed:
-    - `GET /admin/metrics/summary`
-    - `GET /admin/documents/{organization_id}`
-    - `GET /admin/connectors/{organization_id}`
-    - `GET /admin/audit/{organization_id}`
-- **Root cause of confusion:** Prior live API checks may have targeted wrong port, wrong host, or stale backend instance
-
----
-
-## Previously Resolved
-
-### Fresh current-state smoke proof (RESOLVED 2026-04-09)
-- `data/smoke/E2E_CHAT_SMOKE_2026-04-09.json` generated and verified
-- Core backend capability re-proven on widened codebase
-
-### RBAC exposure — org membership reads too broad (RESOLVED 2026-04-09)
-- Commit `615897a` tightened member list permissions
-- `tests/test_rbac_membership_visibility.py` passes
-
----
-
-## Watch Items (Not Blockers)
-
-### 1. Frontend integration confidence gap
-- **Status:** Active work item — **STALLED since 12:14 PM**
-- **Impact:** Need browser-backed verification of `/organizations` page across seeded roles
-- **Next step:** Test with live API + Vite frontend
-- **Note:** No progress recorded since midday update; verification work pending
-
-### 2. RBAC membership reads — needs validation
-- **Status:** Verification pending — **STALLED since 12:14 PM**
-- **Impact:** Ensure non-owner roles cannot access admin endpoints
-- **Next step:** Test `/admin/*` with member-level tokens
-- **Note:** Live API verification not yet executed despite backend being confirmed running
-
-### 3. External integration proof gap
-- **Status:** Deferred
-- **Impact:** Billing, connectors, webhooks exist but lack live integration evidence
-- **Next step:** Prioritize only after frontend happy path verified
-
-### 4. Repo hygiene / generated artifacts
-- **Status:** Cleanup pending
-- **Impact:** Broad uncommitted changes need review
-- **Next step:** After verification complete
-
-### 5. Forge execution reliability after LLM change
+### 3. External-service environment fidelity
 - **Status:** Monitoring
-- **Impact:** Prior browser-backed verification did not complete cleanly
-- **Next step:** Continue monitoring; cross-agent visibility now fixed
+- **Evidence:** Test logs still show hostname-resolution failures for AI readiness (`getaddrinfo failed`) and Redis-backed rate-limit warnings when external service names are unreachable in the current local test environment
+- **Impact:** The suite still passes, but local runtime signals can look noisy or misleading when infrastructure assumptions differ between test and live environments
+- **Next step:** Keep environment/config docs explicit and avoid treating these warnings as product blockers unless they reproduce in the intended runtime stack
+
+### 4. Repo hygiene / commit boundary discipline
+- **Status:** Active
+- **Impact:** The working tree currently spans backend, frontend, docs, env examples, migrations, and legacy-frontend staging
+- **Why it matters:** Broad mixed changes make review, rollback, and release packaging harder
+- **Next step:** Organize current work into clearer commit boundaries after docs/status alignment is finished
+
+### 5. External integration proof gap
+- **Status:** Deferred but real
+- **Impact:** Connectors, billing, webhooks, and sync surfaces exist, but not every path has current integrated proof in the target runtime
+- **Next step:** Prioritize live proof selectively for demo/client-critical integrations instead of trying to verify every extension path at once
+
+---
+
+## Recently Confirmed
+
+### 1. Current automated regression baseline remains healthy (2026-04-21)
+**STATUS: CONFIRMED**
+- `python -m unittest discover -s tests -v` passed **53/53 tests**
+- RBAC visibility and role-enforcement suites are green
+- Chat fallback, citation, rerank, and answer-generation guard tests are green
+
+### 2. Admin/backend breadth is real, not aspirational
+**STATUS: CONFIRMED**
+- Current architecture and route docs match a broad live implementation surface including chat streaming, connectors, billing, audit, metrics, and org/workspace administration
+- The repo should no longer be framed as an “ingestion pipeline foundation” project
 
 ---
 
 ## Decisions Made
 
-### 2026-04-09
-- RBAC tightening: Restrict org member lists to org_owner/platform_owner
-- Deployment model: Docker-first on RTX 5090; `docker-compose.gpu.yml` canonical
-
-### 2026-04-10
-- Admin endpoints confirmed live — no implementation needed
-- Shift focus from "build missing endpoints" to "verify existing endpoints"
+### 2026-04-21
+- Treat repo docs under `docs/` as the primary status truth for SKP, not stale agent-local bootstrap docs
+- Treat current work as hardening/cutover/packaging coordination, not foundational backend bring-up
+- Keep “no hard blocker” status unless a real runtime or product decision genuinely stops forward progress
 
 ---
 
 ## Standup Review Note
 
-No Telegram ping to King required. All previously identified blockers are resolved. Current work is verification, not unblocking.
+No immediate interrupt to Yeshi is required from blockers alone.
+The important action is maintaining accurate status and choosing the next highest-value proof/hardening move, not escalating routine churn.
