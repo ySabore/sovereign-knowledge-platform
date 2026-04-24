@@ -95,6 +95,7 @@ This file tracks delivery status against the current codebase reality, not older
 | Current architecture docs | **Done** | Refreshed to match implementation |
 | Codebase map | **Done** | Added |
 | Ingestion/retrieval architecture doc | **Done** | Added |
+| Retrieval + platform improvement log (April 2026) | **Done** | `docs/deliverables/RETRIEVAL_AND_PLATFORM_IMPROVEMENTS_2026-04.md` |
 | Frontend refactor plan | **Done** | Added |
 | Docs consolidation and pointer cleanup | **In Progress** | Root duplicates reduced; more cleanup still possible |
 
