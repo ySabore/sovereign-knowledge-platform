@@ -290,7 +290,10 @@ export function OrganizationsPanel({
                 {orgScreen === "settings" && (
                   <OrganizationSettingsPanel
                     org={org}
-                    isPlatformOwner={!!user?.is_platform_owner}
+                    canManageCloudCredentials={
+                      Boolean(user?.is_platform_owner) ||
+                      Boolean(user?.org_ids_as_owner?.includes(selectedOrgId))
+                    }
                     showDangerZone={!!user?.is_platform_owner}
                     onSaved={(updated) => {
                       setOrgs((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));

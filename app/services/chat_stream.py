@@ -16,9 +16,14 @@ from app.services.chat import (
     AnswerGenerationError,
     Citation,
     _answer_references_available_citations,
+    _deterministic_cap_answer_override,
+    _deterministic_policy_answer,
+    _deterministic_role_scope_answer,
     _generate_extractive_answer,
     _grounded_prompt_text,
-    build_citations,
+    _likely_permission_contradiction,
+    _postprocess_grounded_rbac,
+    build_citations_for_query,
     generation_model_for_mode,
     has_sufficient_evidence,
     preferred_chat_model_from_org,
@@ -38,10 +43,16 @@ _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 def confidence_label_from_hits(hits: list[RetrievalHit]) -> str:
     if not hits:
         return "low"
-    s = hits[0].score
-    if s >= 0.75:
+    top = [float(h.score) for h in hits[:3]]
+    s1 = top[0]
+    s2 = top[1] if len(top) > 1 else 0.0
+    avg = sum(top) / len(top)
+    strong_count = sum(1 for x in top if x >= 0.35)
+    # High confidence: strong lead hit or strong support across multiple top chunks.
+    if s1 >= 0.72 or (s1 >= 0.58 and s2 >= 0.48) or (avg >= 0.48 and strong_count >= 2):
         return "high"
-    if s >= 0.55:
+    # Medium confidence: usable lead hit or consistent moderate support.
+    if s1 >= 0.36 or (avg >= 0.28 and strong_count >= 2):
         return "medium"
     return "low"
 
@@ -92,6 +103,7 @@ async def _yield_post_generative_stream(
     ok_mode: str,
     fallback_mode: str,
     preferred_chat_model: str | None,
+    hit_contents: list[str],
 ) -> AsyncIterator[dict[str, Any]]:
     if not answer:
         raise AnswerGenerationError("LLM answer generation returned an empty response")
@@ -107,7 +119,52 @@ async def _yield_post_generative_stream(
         }
         return
     if not _answer_references_available_citations(display, citation_count=len(citations)):
-        full_text, cits = _generate_extractive_answer(query, citations)
+        policy_fix = _deterministic_policy_answer(query=query, citations=citations, hit_contents=hit_contents)
+        if policy_fix is not None:
+            full_text = policy_fix[0]
+            cits = [c.to_dict() for c in citations]
+        else:
+            full_text, cits = _generate_extractive_answer(query, citations)
+        yield {"kind": "token", "text": "\n\n"}
+        for chunk in _token_chunks(full_text):
+            yield {"kind": "token", "text": chunk}
+        yield {
+            "kind": "done",
+            "citations": cits,
+            "confidence": confidence_label_from_hits(hits),
+            "full_text": full_text,
+            "generation_mode": fallback_mode,
+            "generation_model": generation_model_for_mode(
+                fallback_mode, preferred_chat_model=preferred_chat_model
+            ),
+        }
+        return
+    if _likely_permission_contradiction(query=query, answer=display, citations=citations):
+        policy_fix = _deterministic_policy_answer(query=query, citations=citations, hit_contents=hit_contents)
+        if policy_fix is not None:
+            full_text = policy_fix[0]
+            cits = [c.to_dict() for c in citations]
+        else:
+            full_text, cits = _generate_extractive_answer(query, citations)
+        yield {"kind": "token", "text": "\n\n"}
+        for chunk in _token_chunks(full_text):
+            yield {"kind": "token", "text": chunk}
+        yield {
+            "kind": "done",
+            "citations": cits,
+            "confidence": confidence_label_from_hits(hits),
+            "full_text": full_text,
+            "generation_mode": fallback_mode,
+            "generation_model": generation_model_for_mode(
+                fallback_mode, preferred_chat_model=preferred_chat_model
+            ),
+        }
+        return
+    policy_fix = _deterministic_policy_answer(query=query, citations=citations, hit_contents=hit_contents)
+    cap_override = _deterministic_cap_answer_override(query, display, policy_fix)
+    if cap_override is not None:
+        full_text = cap_override
+        cits = [c.to_dict() for c in citations]
         yield {"kind": "token", "text": "\n\n"}
         for chunk in _token_chunks(full_text):
             yield {"kind": "token", "text": chunk}
@@ -123,6 +180,7 @@ async def _yield_post_generative_stream(
         }
         return
     final_conf = conf_from_tag if conf_from_tag else confidence_label_from_hits(hits)
+    display = _postprocess_grounded_rbac(query, display, citations, hit_contents)
     yield {
         "kind": "done",
         "citations": [c.to_dict() for c in citations],
@@ -146,7 +204,9 @@ async def stream_grounded_answer_events(
       { "kind": "token", "text": str }
       { "kind": "done", "citations": [...], "confidence": str, "full_text": str }
     """
-    citations = build_citations(hits)
+    citations = build_citations_for_query(hits, query=query)
+    hit_contents = [h.content for h in hits[: len(citations)]]
+    provider = (answer_provider or settings.answer_generation_provider).lower().strip()
     if not citations or not has_sufficient_evidence(hits, query=query):
         yield {"kind": "token", "text": FALLBACK_NO_EVIDENCE}
         yield {
@@ -159,7 +219,28 @@ async def stream_grounded_answer_events(
         }
         return
 
-    provider = (answer_provider or settings.answer_generation_provider).lower().strip()
+    role_scope = _deterministic_role_scope_answer(query, hit_contents, citations)
+    if role_scope is not None:
+        short_mode = (
+            "openai"
+            if provider == "openai"
+            else "anthropic"
+            if provider == "anthropic"
+            else "ollama"
+            if provider == "ollama"
+            else "extractive"
+        )
+        for chunk in _token_chunks(role_scope):
+            yield {"kind": "token", "text": chunk}
+        yield {
+            "kind": "done",
+            "citations": [c.to_dict() for c in citations],
+            "confidence": confidence_label_from_hits(hits),
+            "full_text": role_scope,
+            "generation_mode": short_mode,
+            "generation_model": generation_model_for_mode(short_mode, preferred_chat_model=preferred_chat_model_from_org(org)),
+        }
+        return
     if provider == "extractive":
         full_text, cits = _generate_extractive_answer(query, citations)
         for chunk in _token_chunks(full_text):
@@ -196,6 +277,7 @@ async def stream_grounded_answer_events(
             ok_mode="ollama",
             fallback_mode="ollama_fallback_extractive",
             preferred_chat_model=preferred,
+            hit_contents=hit_contents,
         ):
             yield ev
         return
@@ -225,6 +307,7 @@ async def stream_grounded_answer_events(
             ok_mode="openai",
             fallback_mode="openai_fallback_extractive",
             preferred_chat_model=preferred,
+            hit_contents=hit_contents,
         ):
             yield ev
         return
@@ -254,6 +337,7 @@ async def stream_grounded_answer_events(
             ok_mode="anthropic",
             fallback_mode="anthropic_fallback_extractive",
             preferred_chat_model=preferred,
+            hit_contents=hit_contents,
         ):
             yield ev
         return

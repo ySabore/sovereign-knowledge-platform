@@ -18,6 +18,7 @@ export function AcceptInvitePage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<AcceptedMember | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
 
   const redirectToHere = useMemo(() => {
     const p = new URLSearchParams();
@@ -26,8 +27,15 @@ export function AcceptInvitePage() {
   }, [token]);
 
   useEffect(() => {
-    if (loading || !user || !token || busy || done) return;
+    // New token or account: allow one fresh auto-attempt.
+    setAttempted(false);
+    setErr(null);
+  }, [token, user?.id]);
+
+  useEffect(() => {
+    if (loading || !user || !token || busy || done || attempted) return;
     setBusy(true);
+    setAttempted(true);
     setErr(null);
     void api
       .post<AcceptedMember>("/organizations/invites/accept", { token })
@@ -37,7 +45,7 @@ export function AcceptInvitePage() {
       })
       .catch((ex) => setErr(apiErrorMessage(ex)))
       .finally(() => setBusy(false));
-  }, [loading, user, token, busy, done, refreshMe]);
+  }, [loading, user, token, busy, done, attempted, refreshMe]);
 
   return (
     <div style={{ minHeight: "100%", display: "grid", placeItems: "center", padding: "2rem" }}>
@@ -93,6 +101,11 @@ export function AcceptInvitePage() {
             <p className="sk-muted" style={{ marginTop: "0.5rem" }}>
               If this says token is invalid/used, ask the inviter to resend and use the latest link.
             </p>
+            <div style={{ marginTop: "0.75rem" }}>
+              <button type="button" className="sk-btn secondary" onClick={() => setAttempted(false)}>
+                Try again
+              </button>
+            </div>
           </>
         )}
       </div>

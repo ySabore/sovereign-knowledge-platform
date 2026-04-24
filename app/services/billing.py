@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -45,6 +45,17 @@ PLAN_ENTITLEMENTS: dict[str, PlanEntitlements] = {
     "admin": PlanEntitlements(999, 999, 999_999, 2000, 1000),
 }
 
+# UI list-price hints when BILLING_PLAN_PRICE_LABELS_JSON is unset. Anchored to common SMB / mid-market
+# SaaS + AI search bundles (flat org/month positioning, not a binding quote). Override via env JSON.
+DEFAULT_PLAN_PRICE_DISPLAY: dict[str, str] = {
+    "free": "$0",
+    "starter": "From $79 / month",
+    "team": "From $299 / month",
+    "business": "From $799 / month",
+    "scale": "From $1,499 / month",
+    "admin": "Custom pricing",
+}
+
 
 def normalize_plan_key(plan: str | None) -> str:
     p = (plan or "free").strip().lower()
@@ -57,6 +68,48 @@ def normalize_plan_key(plan: str | None) -> str:
 
 def get_plan_entitlements(plan: str | None) -> PlanEntitlements:
     return PLAN_ENTITLEMENTS[normalize_plan_key(plan)]
+
+
+def _plan_price_display_labels() -> dict[str, str]:
+    raw = (settings.billing_plan_price_labels_json or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k).strip().lower(): str(v).strip() for k, v in data.items() if str(v).strip()}
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("billing_plan_price_labels_json invalid JSON; ignoring")
+    return {}
+
+
+def list_plan_catalog() -> list[dict[str, int | str | None]]:
+    """Stable plan tiers for UI comparison tables."""
+    order = ["free", "starter", "team", "business", "scale", "admin"]
+    price_map: dict[str, str | None] = {
+        "starter": (settings.stripe_price_starter or "").strip() or None,
+        "team": (settings.stripe_price_team or "").strip() or None,
+        "business": (settings.stripe_price_business or "").strip() or None,
+        "scale": (settings.stripe_price_scale or "").strip() or None,
+    }
+    display_labels = _plan_price_display_labels()
+    out: list[dict[str, int | str | None]] = []
+    for plan_key in order:
+        ent = PLAN_ENTITLEMENTS[plan_key]
+        label = display_labels.get(plan_key) or DEFAULT_PLAN_PRICE_DISPLAY.get(plan_key) or None
+        out.append(
+            {
+                "plan": plan_key,
+                "price_id": price_map.get(plan_key),
+                "price_display": label,
+                "connectors_max": ent.connectors,
+                "seats_max": ent.seats,
+                "queries_per_month": ent.queries_per_month,
+                "queries_per_day": ent.queries_per_day,
+                "queries_per_hour": ent.queries_per_hour,
+            }
+        )
+    return out
 
 
 def stripe_configured() -> bool:
@@ -201,12 +254,63 @@ def create_portal_session(db: Session, *, org: Organization, return_url: str) ->
     _configure_stripe()
     import stripe
 
-    session = stripe.billing_portal.Session.create(
-        customer=org.stripe_customer_id,
-        return_url=return_url,
-    )
+    portal_kwargs: dict[str, Any] = {
+        "customer": org.stripe_customer_id,
+        "return_url": return_url,
+    }
+    conf = (settings.stripe_billing_portal_configuration_id or "").strip()
+    if conf:
+        portal_kwargs["configuration"] = conf
+    session = stripe.billing_portal.Session.create(**portal_kwargs)
     invalidate_plan_cache(org.id)
     return {"portal_url": session.url or ""}
+
+
+def _unix_to_iso(value: Any) -> str | None:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(n, tz=timezone.utc).isoformat()
+
+
+def list_invoice_history(*, org: Organization, limit: int = 20) -> list[dict[str, Any]]:
+    """Return Stripe invoice rows for a customer; empty when unavailable."""
+    if not stripe_configured() or not org.stripe_customer_id:
+        return []
+    _configure_stripe()
+    import stripe
+
+    out: list[dict[str, Any]] = []
+    items = stripe.Invoice.list(customer=org.stripe_customer_id, limit=max(1, min(limit, 100)))
+    for inv_obj in items.auto_paging_iter():
+        inv = inv_obj.to_dict() if hasattr(inv_obj, "to_dict") else dict(inv_obj)
+        period_start = None
+        period_end = None
+        lines = (inv.get("lines") or {}).get("data") or []
+        if lines:
+            first_period = (lines[0].get("period") or {}) if isinstance(lines[0], dict) else {}
+            period_start = _unix_to_iso(first_period.get("start"))
+            period_end = _unix_to_iso(first_period.get("end"))
+        out.append(
+            {
+                "invoice_id": str(inv.get("id") or ""),
+                "number": str(inv.get("number")) if inv.get("number") else None,
+                "status": str(inv.get("status")) if inv.get("status") else None,
+                "currency": str(inv.get("currency") or "usd").upper(),
+                "total_cents": int(inv.get("total") or 0),
+                "amount_due_cents": int(inv.get("amount_due") or 0),
+                "amount_paid_cents": int(inv.get("amount_paid") or 0),
+                "created_at": _unix_to_iso(inv.get("created")),
+                "period_start_at": period_start,
+                "period_end_at": period_end,
+                "hosted_invoice_url": str(inv.get("hosted_invoice_url")) if inv.get("hosted_invoice_url") else None,
+                "invoice_pdf_url": str(inv.get("invoice_pdf")) if inv.get("invoice_pdf") else None,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def count_org_members(db: Session, organization_id: UUID) -> int:

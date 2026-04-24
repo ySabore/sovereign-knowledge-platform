@@ -33,6 +33,8 @@ class HealthTests(unittest.TestCase):
         body = response.json()
         self.assertIn("environment", body)
         self.assertIn("embedding_model", body)
+        self.assertIn("connector_catalog", body)
+        self.assertIsInstance(body.get("connector_catalog"), list)
         self.assertNotIn("jwt_secret", body)
 
     def test_health_ai_returns_shape(self) -> None:

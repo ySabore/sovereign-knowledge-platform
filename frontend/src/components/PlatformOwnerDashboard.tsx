@@ -164,7 +164,7 @@ export function PlatformOwnerDashboard({
             <li>Connector sync jobs run on a schedule; check workspace connectors for failures.</li>
             <li>
               Review{" "}
-              <Link to="/home?panel=billing" style={{ color: C.accent, fontWeight: 600 }}>
+              <Link to="/billing" style={{ color: C.accent, fontWeight: 600 }}>
                 billing
               </Link>{" "}
               for seat limits and invoices.

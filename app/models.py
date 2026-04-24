@@ -349,6 +349,7 @@ class ChatSession(Base):
     workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pinned: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -367,6 +368,9 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     citations_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
     feedback: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    generation_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")

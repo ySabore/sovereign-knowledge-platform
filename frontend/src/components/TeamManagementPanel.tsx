@@ -108,6 +108,7 @@ export function TeamManagementPanel({
   const [role, setRole] = useState("member");
   const [acceptToken, setAcceptToken] = useState("");
   const [acceptingInvite, setAcceptingInvite] = useState(false);
+  const [inviteActionBusyId, setInviteActionBusyId] = useState<string | null>(null);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -207,12 +208,32 @@ export function TeamManagementPanel({
     if (!orgId) return;
     setErr(null);
     setMsg(null);
+    setInviteActionBusyId(inviteId);
     try {
       const { data } = await api.post<InviteIssueResponse>(`/organizations/${orgId}/invites/${inviteId}/resend`);
       setMsg(`Invite resent. Token (for testing): ${data.invite_token}`);
       await loadInvites(orgId);
     } catch (ex) {
       setErr(apiErrorMessage(ex));
+    } finally {
+      setInviteActionBusyId(null);
+    }
+  }
+
+  async function revokeInvite(inviteId: string) {
+    if (!orgId) return;
+    if (!window.confirm("Delete this pending invite? The email link/token will stop working.")) return;
+    setErr(null);
+    setMsg(null);
+    setInviteActionBusyId(inviteId);
+    try {
+      await api.delete(`/organizations/${orgId}/invites/${inviteId}`);
+      setMsg("Pending invite deleted.");
+      await loadInvites(orgId);
+    } catch (ex) {
+      setErr(apiErrorMessage(ex));
+    } finally {
+      setInviteActionBusyId(null);
     }
   }
 
@@ -274,7 +295,7 @@ export function TeamManagementPanel({
   const activeMembers = members.length;
   const orgAdmins = useMemo(() => members.filter((m) => m.role === "org_owner"), [members]);
   const orgMembersOnly = useMemo(() => members.filter((m) => m.role === "member"), [members]);
-  const pendingInvites = useMemo(() => invites.filter((i) => i.status === "pending").slice(0, 4), [invites]);
+  const pendingInvites = useMemo(() => invites.filter((i) => i.status === "pending"), [invites]);
   const queriesToday = Math.max(2, activeMembers * 3 + 2);
 
   return (
@@ -524,14 +545,45 @@ export function TeamManagementPanel({
             <div style={{ marginTop: 12 }}>
               <div style={{ color: T.muted, fontSize: 12 }}>Pending invites ({pendingInvites.length})</div>
               {pendingInvites.map((m) => (
-                <div key={m.id} style={{ marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 8px", display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <div>
-                    <div style={{ color: T.text, fontSize: 11 }}>{m.email}</div>
+                <div key={m.id} style={{ marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: T.text, fontSize: 11, wordBreak: "break-word" }}>{m.email}</div>
                     <div style={{ color: T.muted, fontSize: 10 }}>Pending · {roleLabel(m.role)}</div>
                   </div>
-                  <button onClick={() => void resendInvite(m.id)} type="button" style={{ border: `1px solid ${T.border}`, background: "transparent", color: T.muted, borderRadius: 6, fontSize: 10, padding: "2px 6px" }}>
-                    Resend
-                  </button>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                      onClick={() => void resendInvite(m.id)}
+                      disabled={inviteActionBusyId === m.id}
+                      type="button"
+                      style={{
+                        border: `1px solid ${T.border}`,
+                        background: "transparent",
+                        color: T.muted,
+                        borderRadius: 6,
+                        fontSize: 10,
+                        padding: "2px 6px",
+                        maxWidth: "100%",
+                      }}
+                    >
+                      {inviteActionBusyId === m.id ? "..." : "Resend"}
+                    </button>
+                    <button
+                      onClick={() => void revokeInvite(m.id)}
+                      disabled={inviteActionBusyId === m.id}
+                      type="button"
+                      style={{
+                        border: "1px solid rgba(239,68,68,0.35)",
+                        background: "rgba(239,68,68,0.08)",
+                        color: "#f87171",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        padding: "2px 6px",
+                        maxWidth: "100%",
+                      }}
+                    >
+                      {inviteActionBusyId === m.id ? "..." : "Delete"}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

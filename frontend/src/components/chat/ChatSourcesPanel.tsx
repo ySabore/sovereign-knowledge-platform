@@ -4,16 +4,109 @@ type Props = {
   citations: Citation[];
   selected: Citation | null;
   onSelect: (c: Citation) => void;
+  /** Close control when panel is used as a slide-over drawer. */
+  onClose?: () => void;
+  /**
+   * Answer-level confidence (high | medium | low) — same signal as the assistant footer.
+   * When set, the header pill uses this; retrieval scores are shown as a secondary line.
+   */
+  answerConfidence?: string | null;
+  variant?: "drawer" | "dock";
+  /** Pin the panel to the layout (drawer mode only). */
+  onPin?: () => void;
+  /** Return to overlay drawer layout (dock mode only). */
+  onUnpin?: () => void;
 };
 
-export function ChatSourcesPanel({ citations, selected, onSelect }: Props) {
+function tierFromBestScore(best: number): "High" | "Medium" | "Low" {
+  if (best >= 0.75) return "High";
+  if (best >= 0.55) return "Medium";
+  return "Low";
+}
+
+function pillClassForTier(label: "High" | "Medium" | "Low") {
+  if (label === "High") return "skc-pill skc-pill-ok";
+  if (label === "Medium") return "skc-pill skc-pill-med";
+  return "skc-pill skc-pill-low";
+}
+
+export function ChatSourcesPanel({
+  citations,
+  selected,
+  onSelect,
+  onClose,
+  answerConfidence,
+  variant = "drawer",
+  onPin,
+  onUnpin,
+}: Props) {
   const best = citations.length > 0 ? Math.max(...citations.map((c) => c.score || 0)) : 0;
-  const conf = best >= 0.75 ? "High" : best >= 0.55 ? "Medium" : "Low";
+  const retrievalTier = citations.length > 0 ? tierFromBestScore(best) : null;
+  const ac = answerConfidence?.trim().toLowerCase() ?? "";
+  const answerIsHml = ac === "high" || ac === "medium" || ac === "low";
+  const answerTierLabel: "High" | "Medium" | "Low" | null = answerIsHml
+    ? ((ac.charAt(0).toUpperCase() + ac.slice(1)) as "High" | "Medium" | "Low")
+    : null;
+
+  const primaryTier = answerTierLabel ?? retrievalTier;
+  const showRetrievalHint =
+    Boolean(answerTierLabel && retrievalTier && citations.length > 0) && answerTierLabel !== retrievalTier;
+
   return (
     <aside className="skc-sources">
       <div className="skc-sources-header">
-        <h3 style={{ margin: 0, fontSize: "0.85rem" }}>Sources · {citations.length} cited</h3>
-        <span className={`skc-pill ${conf === "High" ? "skc-pill-ok" : conf === "Medium" ? "skc-pill-med" : "skc-pill-low"}`}>{conf}</span>
+        <div className="skc-sources-header-titles">
+          <h3 style={{ fontSize: "0.85rem" }}>Sources · {citations.length} cited</h3>
+          <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+            {primaryTier ? (
+              <span
+                className={pillClassForTier(primaryTier)}
+                title={answerTierLabel ? "Answer confidence (matches chat footer)" : "Retrieval match strength (best chunk)"}
+              >
+                {primaryTier}
+              </span>
+            ) : (
+              <span className="skc-pill" style={{ fontSize: "0.65rem", opacity: 0.75 }}>
+                —
+              </span>
+            )}
+          </div>
+          {showRetrievalHint && retrievalTier && (
+            <span className="skc-sources-match-hint">
+              Retrieval only: {retrievalTier} (best chunk {Math.round(best * 100)}%) — can differ from answer confidence
+            </span>
+          )}
+        </div>
+        <div className="skc-sources-header-actions">
+          {variant === "drawer" && onPin && (
+            <button
+              type="button"
+              className="skc-sources-pin-btn"
+              onClick={onPin}
+              aria-label="Pin sources panel to the side"
+              title="Pin panel"
+            >
+              📌
+            </button>
+          )}
+          {variant === "dock" && onUnpin && (
+            <button
+              type="button"
+              className="skc-sources-pin-btn"
+              onClick={onUnpin}
+              aria-pressed
+              aria-label="Unpin sources panel"
+              title="Unpin panel"
+            >
+              ⊟
+            </button>
+          )}
+          {variant === "drawer" && onClose && (
+            <button type="button" className="skc-sources-close" onClick={onClose} aria-label="Close sources panel">
+              ×
+            </button>
+          )}
+        </div>
       </div>
       <div className="skc-sources-list">
         {citations.length === 0 && <p className="sk-muted">Send a question to see grounded sources.</p>}

@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    IntegrationConnector,
     Organization,
     OrganizationMembership,
     OrgMembershipRole,
@@ -184,6 +185,15 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             )
             db.add_all([self.editor_doc, self.other_doc])
             db.flush()
+            self.connector = IntegrationConnector(
+                organization_id=org.id,
+                connector_type="google-drive",
+                nango_connection_id="conn-rbac-1",
+                status="active",
+                config={"workspace_id": str(ws_unassigned.id), "workspace_ids": [str(ws_unassigned.id)]},
+            )
+            db.add(self.connector)
+            db.flush()
 
             db.add_all(
                 [
@@ -219,6 +229,7 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             db.commit()
             db.refresh(self.editor_doc)
             db.refresh(self.other_doc)
+            db.refresh(self.connector)
         finally:
             db.close()
 
@@ -264,6 +275,73 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         resp = self.client.get(
             f"/organizations/{self.org_id}/audit",
             params={"workspace_id": str(self.workspace_unassigned_id)},
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+
+    def test_workspace_admin_can_assign_connector_to_managed_workspace(self) -> None:
+        headers = self._login("ws-admin-rbac@example.com")
+        resp = self.client.put(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertIn(str(self.workspace_id), body.get("workspace_ids", []))
+
+    def test_workspace_admin_cannot_remove_connector_from_unmanaged_workspace(self) -> None:
+        headers = self._login("ws-admin-rbac@example.com")
+        resp = self.client.delete(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_unassigned_id}",
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+
+    def test_workspace_admin_can_patch_drive_scope_for_managed_workspace(self) -> None:
+        headers = self._login("ws-admin-rbac@example.com")
+        assign = self.client.put(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+        resp = self.client.patch(
+            f"/connectors/{self.connector.id}/config",
+            json={
+                "workspace_id": str(self.workspace_id),
+                "drive_folder_ids": ["folderA", "folderB"],
+                "drive_include_subfolders": False,
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body.get("workspace_id"), str(self.workspace_id))
+        self.assertEqual(body.get("drive_sync", {}).get("folder_ids"), ["folderA", "folderB"])
+        self.assertFalse(body.get("drive_sync", {}).get("include_subfolders", True))
+
+        db = self.SessionLocal()
+        try:
+            conn = db.get(IntegrationConnector, self.connector.id)
+            self.assertIsNotNone(conn)
+            cfg = conn.config if isinstance(conn.config, dict) else {}
+            ws_settings = cfg.get("workspace_settings")
+            self.assertIsInstance(ws_settings, dict)
+            ws_cfg = ws_settings.get(str(self.workspace_id))
+            self.assertIsInstance(ws_cfg, dict)
+            self.assertEqual(ws_cfg.get("drive_folder_ids"), ["folderA", "folderB"])
+            self.assertFalse(bool(ws_cfg.get("drive_include_subfolders", True)))
+        finally:
+            db.close()
+
+    def test_workspace_admin_cannot_patch_drive_scope_for_unmanaged_workspace(self) -> None:
+        headers = self._login("ws-admin-rbac@example.com")
+        resp = self.client.patch(
+            f"/connectors/{self.connector.id}/config",
+            json={
+                "workspace_id": str(self.workspace_unassigned_id),
+                "drive_folder_ids": ["folderA"],
+                "drive_include_subfolders": True,
+            },
             headers=headers,
         )
         self.assertEqual(resp.status_code, 403, resp.text)

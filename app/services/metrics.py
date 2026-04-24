@@ -20,6 +20,17 @@ _CONF_SCORE = case(
 )
 
 
+def _sanitize_drive_folder_ids(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if s:
+            out.append(s)
+    return out
+
+
 def _month_start_utc(now: datetime | None = None) -> datetime:
     n = now or datetime.now(timezone.utc)
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -150,16 +161,45 @@ def list_connectors_for_org(db: Session, organization_id: UUID) -> list[dict[str
     out = []
     for r in rows:
         nid = r.nango_connection_id or ""
-        out.append(
-            {
-                "id": str(r.id),
-                "connector_type": r.connector_type,
-                "status": r.status,
-                "last_synced_at": r.last_synced_at.isoformat() if r.last_synced_at else None,
-                "document_count": r.document_count,
-                "nango_connection_id": nid[:12] + "…" if len(nid) > 12 else nid,
+        cfg = r.config if isinstance(r.config, dict) else {}
+        workspace_ids: list[str] = []
+        raw_workspace_ids = cfg.get("workspace_ids")
+        if isinstance(raw_workspace_ids, list):
+            for wid in raw_workspace_ids:
+                s = str(wid).strip()
+                if s and s not in workspace_ids:
+                    workspace_ids.append(s)
+        workspace_id_raw = cfg.get("workspace_id")
+        workspace_id = str(workspace_id_raw).strip() if workspace_id_raw else None
+        if workspace_id and workspace_id not in workspace_ids:
+            workspace_ids.append(workspace_id)
+        row: dict[str, Any] = {
+            "id": str(r.id),
+            "connector_type": r.connector_type,
+            "status": r.status,
+            "last_synced_at": r.last_synced_at.isoformat() if r.last_synced_at else None,
+            "document_count": r.document_count,
+            "nango_connection_id": nid[:12] + "…" if len(nid) > 12 else nid,
+            "workspace_id": workspace_id,
+            "workspace_ids": workspace_ids,
+        }
+        if r.connector_type == "google-drive":
+            drive_sync_by_workspace: dict[str, dict[str, Any]] = {}
+            raw_settings = cfg.get("workspace_settings")
+            if isinstance(raw_settings, dict):
+                for wid, ws_cfg in raw_settings.items():
+                    if not isinstance(ws_cfg, dict):
+                        continue
+                    drive_sync_by_workspace[str(wid)] = {
+                        "folder_ids": _sanitize_drive_folder_ids(ws_cfg.get("drive_folder_ids")),
+                        "include_subfolders": bool(ws_cfg.get("drive_include_subfolders", True)),
+                    }
+            row["drive_sync"] = {
+                "folder_ids": _sanitize_drive_folder_ids(cfg.get("drive_folder_ids")),
+                "include_subfolders": bool(cfg.get("drive_include_subfolders", True)),
             }
-        )
+            row["drive_sync_by_workspace"] = drive_sync_by_workspace
+        out.append(row)
     return out
 
 

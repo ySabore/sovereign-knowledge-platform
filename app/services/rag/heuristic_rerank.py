@@ -15,6 +15,37 @@ from app.services.rag.types import RetrievalHit
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _NUMERIC_MATCH_BONUS = 0.15
+_QUERY_COVERAGE_BONUS = 0.08
+_SHORT_CHUNK_TOKEN_FLOOR = 12
+_SHORT_CHUNK_MAX_PENALTY = 0.03
+_ROLE_POLICY_BONUS = 0.06
+_ROLE_MARKERS = {
+    "role",
+    "roles",
+    "admin",
+    "owner",
+    "editor",
+    "member",
+    "workspace",
+    "organization",
+    "org",
+    "platform",
+}
+_POLICY_MARKERS = {
+    "can",
+    "cannot",
+    "allowed",
+    "permission",
+    "permissions",
+    "only",
+    "must",
+    "never",
+    "create",
+    "delete",
+    "access",
+    "assign",
+    "invite",
+}
 
 
 def _tokens(text: str) -> set[str]:
@@ -39,6 +70,16 @@ def lexical_overlap_score(query: str, chunk_text: str) -> float:
     inter = len(q & c)
     union = len(q | c)
     return inter / union if union else 0.0
+
+
+def _query_term_coverage(query_tokens: set[str], chunk_tokens: set[str]) -> float:
+    """
+    Fraction of query tokens present in the chunk (recall-style).
+    Helps long policy chunks where Jaccard can be very small.
+    """
+    if not query_tokens:
+        return 0.0
+    return len(query_tokens & chunk_tokens) / len(query_tokens)
 
 
 def _chunk_lexical_similarity(a: str, b: str) -> float:
@@ -79,10 +120,25 @@ def apply_heuristic_rerank(
         return hits[:k]
 
     lex_scores = [lexical_overlap_score(query, h.content) for h in hits]
+    q_tokens = _tokens(query)
     q_numbers = _number_tokens(query)
+    needs_policy_precision = bool(q_tokens & _ROLE_MARKERS) and bool(q_tokens & _POLICY_MARKERS)
     blended: list[float] = []
     for h, lx in zip(hits, lex_scores, strict=True):
+        c_tokens = _tokens(h.content)
         score = _blended_score(h.score, lx)
+        score += _QUERY_COVERAGE_BONUS * _query_term_coverage(q_tokens, c_tokens)
+        if needs_policy_precision:
+            # Promote chunks that include both role and policy language for RBAC-style questions.
+            has_role = bool(c_tokens & _ROLE_MARKERS)
+            has_policy = bool(c_tokens & _POLICY_MARKERS)
+            if has_role and has_policy:
+                score += _ROLE_POLICY_BONUS
+        # Down-rank tiny/noisy fragments that often get high semantic noise scores.
+        if len(c_tokens) < _SHORT_CHUNK_TOKEN_FLOOR:
+            missing = _SHORT_CHUNK_TOKEN_FLOOR - len(c_tokens)
+            penalty = min(_SHORT_CHUNK_MAX_PENALTY, 0.003 * missing)
+            score -= penalty
         if q_numbers:
             c_numbers = _number_tokens(h.content)
             if c_numbers:

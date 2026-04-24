@@ -118,7 +118,9 @@ WHERE d.workspace_id = CAST(:ws AS uuid)
     rows = db.execute(stmt, params).all()
     out: list[RetrievalHit] = []
     for row in rows:
-        trank = float(row[7]) if row[7] is not None else 0.0
+        # SQL selects 7 columns (0..6); use named access to avoid index drift.
+        trank_raw = row._mapping.get("trank")
+        trank = float(trank_raw) if trank_raw is not None else 0.0
         out.append(
             RetrievalHit(
                 chunk_id=row[0],

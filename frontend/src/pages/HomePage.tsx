@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage } from "../api/client";
 import { fetchPublicConfig } from "../lib/publicConfig";
 import { KnowledgeAnalyticsPanel } from "../components/KnowledgeAnalyticsPanel";
@@ -1467,16 +1467,78 @@ type BillingPlan = {
   queries_per_month: number;
   queries_per_day: number;
   queries_per_hour: number | null;
+  queries_used_month: number;
   connectors_used: number;
   seats_used: number;
   billing_grace_until: string | null;
 };
+type BillingPlanTier = {
+  plan: string;
+  price_id: string | null;
+  price_display?: string | null;
+  connectors_max: number;
+  seats_max: number;
+  queries_per_month: number;
+  queries_per_day: number;
+  queries_per_hour: number | null;
+};
+type BillingPlansCatalog = {
+  organization_id: string;
+  current_plan: string;
+  plans: BillingPlanTier[];
+};
+type BillingCheckoutResponse = {
+  checkout_url: string;
+  session_id: string;
+};
+type BillingPortalResponse = {
+  portal_url: string;
+};
+type BillingInvoice = {
+  invoice_id: string;
+  number: string | null;
+  status: string | null;
+  currency: string;
+  total_cents: number;
+  amount_due_cents: number;
+  amount_paid_cents: number;
+  created_at: string | null;
+  period_start_at: string | null;
+  period_end_at: string | null;
+  hosted_invoice_url: string | null;
+  invoice_pdf_url: string | null;
+};
+type BillingInvoicesResponse = {
+  organization_id: string;
+  stripe_enabled: boolean;
+  customer_id: string | null;
+  invoices: BillingInvoice[];
+};
+
+function formatBillingPlanLabel(p: string) {
+  return p ? `${p[0].toUpperCase()}${p.slice(1)}` : "Unknown";
+}
+
+function formatSubscriptionStatusLabel(raw: string | null) {
+  if (!raw) return "Active";
+  const s = raw.replace(/_/g, " ");
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function BillingPanel() {
   const C = useOrgShellTokens();
+  const planCompareRef = useRef<HTMLDivElement | null>(null);
   const [orgs, setOrgs] = useState<BillingOrg[]>([]);
   const [orgId, setOrgId] = useState("");
   const [plan, setPlan] = useState<BillingPlan | null>(null);
+  const [planCatalog, setPlanCatalog] = useState<BillingPlanTier[]>([]);
+  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const [rateLimitRedis, setRateLimitRedis] = useState(true);
+  const [contactSalesEmail, setContactSalesEmail] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
+  const [checkoutPlanBusy, setCheckoutPlanBusy] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1484,53 +1546,241 @@ function BillingPanel() {
       .get<BillingOrg[]>("/organizations/me")
       .then((r) => {
         setOrgs(r.data);
-        if (!orgId && r.data[0]) setOrgId(r.data[0].id);
+        setOrgId((prev) => prev || r.data[0]?.id || "");
       })
       .catch((e) => setErr(apiErrorMessage(e)));
+    void fetchPublicConfig()
+      .then((cfg) => {
+        setStripeEnabled(Boolean(cfg.features?.stripe_billing));
+        setRateLimitRedis(Boolean(cfg.rate_limit_redis_enabled));
+        setContactSalesEmail(typeof cfg.contact_sales_email === "string" && cfg.contact_sales_email.trim()
+          ? cfg.contact_sales_email.trim()
+          : null);
+      })
+      .catch(() => {
+        setStripeEnabled(false);
+        setRateLimitRedis(true);
+        setContactSalesEmail(null);
+      });
+  }, []);
+
+  const reloadBilling = useCallback(() => {
+    if (!orgId) return;
+    setErr(null);
+    setLoading(true);
+    void Promise.all([
+      api.get<BillingPlan>(`/organizations/${orgId}/billing/plan`),
+      api.get<BillingPlansCatalog>(`/organizations/${orgId}/billing/plans`),
+      api.get<BillingInvoicesResponse>(`/organizations/${orgId}/billing/invoices`),
+    ])
+      .then(([planResp, catalogResp, invoiceResp]) => {
+        setPlan(planResp.data);
+        setPlanCatalog(Array.isArray(catalogResp.data.plans) ? catalogResp.data.plans : []);
+        setInvoices(Array.isArray(invoiceResp.data.invoices) ? invoiceResp.data.invoices : []);
+      })
+      .catch((e) => setErr(apiErrorMessage(e)))
+      .finally(() => setLoading(false));
   }, [orgId]);
 
   useEffect(() => {
-    if (!orgId) return;
-    setErr(null);
-    void api
-      .get<BillingPlan>(`/organizations/${orgId}/billing/plan`)
-      .then((r) => setPlan(r.data))
-      .catch((e) => setErr(apiErrorMessage(e)));
-  }, [orgId]);
+    reloadBilling();
+  }, [reloadBilling]);
 
+  async function openPortal() {
+    if (!orgId) return;
+    setPortalBusy(true);
+    setErr(null);
+    try {
+      const { data } = await api.post<BillingPortalResponse>(`/organizations/${orgId}/billing/portal`, {
+        return_url: window.location.href,
+      });
+      if (data.portal_url) window.location.assign(data.portal_url);
+    } catch (e) {
+      setErr(apiErrorMessage(e));
+    } finally {
+      setPortalBusy(false);
+    }
+  }
+
+  async function startCheckout(tier: BillingPlanTier) {
+    if (!orgId || !tier.price_id) return;
+    setCheckoutPlanBusy(tier.plan);
+    setErr(null);
+    try {
+      const { data } = await api.post<BillingCheckoutResponse>(`/organizations/${orgId}/billing/checkout`, {
+        price_id: tier.price_id,
+        success_url: window.location.href,
+        cancel_url: window.location.href,
+      });
+      if (data.checkout_url) window.location.assign(data.checkout_url);
+    } catch (e) {
+      setErr(apiErrorMessage(e));
+    } finally {
+      setCheckoutPlanBusy(null);
+    }
+  }
+
+  const currentTier = useMemo(
+    () => (plan ? planCatalog.find((t) => t.plan === plan.plan) ?? null : null),
+    [planCatalog, plan],
+  );
   const seatPct = plan ? Math.min(100, Math.round((plan.seats_used / Math.max(plan.seats_max, 1)) * 100)) : 0;
   const connPct = plan ? Math.min(100, Math.round((plan.connectors_used / Math.max(plan.connectors_max, 1)) * 100)) : 0;
-  const queryPct = plan ? Math.min(100, Math.round((Math.max(plan.queries_per_day, 1) / Math.max(plan.queries_per_month, 1)) * 100)) : 0;
+  const queriesUsed = plan ? Math.max(0, plan.queries_used_month ?? 0) : 0;
+  const queryPct = plan
+    ? Math.min(100, Math.round((queriesUsed / Math.max(plan.queries_per_month, 1)) * 100))
+    : 0;
+  const orderedCatalog = useMemo(() => {
+    const order = ["free", "starter", "team", "business", "scale", "admin"];
+    return [...planCatalog].sort(
+      (a, b) => order.indexOf(a.plan) - order.indexOf(b.plan),
+    );
+  }, [planCatalog]);
+  const billingHeroSubtitle = useMemo(() => {
+    if (!plan) return "Live usage and entitlements";
+    const name = formatBillingPlanLabel(plan.plan);
+    if (plan.billing_grace_until) {
+      try {
+        const g = new Date(plan.billing_grace_until).toLocaleDateString();
+        return `${name} plan · Grace until ${g}`;
+      } catch {
+        /* ignore */
+      }
+    }
+    const st = (plan.subscription_status || "").toLowerCase();
+    if (st === "trialing") return `${name} plan · Trial`;
+    if (st === "past_due") return `${name} plan · Payment issue — update in Stripe`;
+    if (st === "canceled" || st === "cancelled") return `${name} plan · Subscription ended`;
+    if (st === "active") return `${name} plan · Renews via Stripe`;
+    if (st) return `${name} plan · ${st.replace(/_/g, " ")}`;
+    return `${name} plan · Usage and caps below`;
+  }, [plan]);
+  const upgradeTrackOrder = useMemo(() => ["free", "starter", "team", "business", "scale"], []);
+  const upgradeTargetTier = useMemo(() => {
+    if (!plan) return null;
+    const idx = upgradeTrackOrder.indexOf(plan.plan);
+    if (idx < 0 || idx >= upgradeTrackOrder.length - 1) return null;
+    const nextKey = upgradeTrackOrder[idx + 1];
+    return orderedCatalog.find((t) => t.plan === nextKey) ?? null;
+  }, [plan, orderedCatalog, upgradeTrackOrder]);
+  const upgradeHook = useMemo(() => {
+    if (connPct >= 70) return `You are using about ${connPct}% of your connector allowance.`;
+    if (connPct >= 55) return `You are using about ${connPct}% of your connector allowance.`;
+    if (seatPct >= 70) return `You are using about ${seatPct}% of included seats.`;
+    if (queryPct >= 75) return `You are approaching this month's query cap.`;
+    if (queryPct >= 55) return `Query usage is about ${queryPct}% of the monthly allowance.`;
+    return "Higher tiers include more seats, connectors, and monthly queries.";
+  }, [connPct, seatPct, queryPct]);
+  const latestInvoicePdf = useMemo(() => {
+    for (const inv of invoices) {
+      if (inv.invoice_pdf_url) return inv;
+    }
+    return null;
+  }, [invoices]);
+  const planFeatureBullets = useMemo(() => {
+    const tier = currentTier;
+    if (!tier) return [];
+    const pk = tier.plan;
+    const support =
+      pk === "free" || pk === "starter"
+        ? "Standard support"
+        : pk === "team"
+          ? "Email + chat support"
+          : pk === "business"
+            ? "Priority support · admin-friendly limits"
+            : pk === "scale"
+              ? "Priority support · expanded caps"
+              : "Platform administration";
+    return [
+      `${tier.seats_max.toLocaleString()} users included`,
+      `${tier.queries_per_month.toLocaleString()} queries / month`,
+      `${tier.connectors_max.toLocaleString()} connectors included`,
+      support,
+      ...(pk === "business" || pk === "scale" ? ["Workspace-scoped connectors"] : []),
+    ];
+  }, [currentTier]);
+  const fmtMoney = (currency: string, cents: number) => {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: (currency || "USD").toUpperCase(),
+      }).format((cents || 0) / 100);
+    } catch {
+      return `${((cents || 0) / 100).toFixed(2)} ${(currency || "USD").toUpperCase()}`;
+    }
+  };
 
-  const invoiceRows = [
-    { date: "Nov 1, 2025", amount: "$299.00", status: "Paid" },
-    { date: "Oct 1, 2025", amount: "$299.00", status: "Paid" },
-    { date: "Sep 1, 2025", amount: "$149.00", status: "Paid" },
-  ];
+  const UsageRow = ({
+    label,
+    left,
+    pct,
+    color,
+  }: {
+    label: string;
+    left: string;
+    pct: number;
+    color: string;
+  }) => (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.t2, marginBottom: 6 }}>
+        <span>{label}</span>
+        <span style={{ fontFamily: C.mono }}>{left}</span>
+      </div>
+      <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 999, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 999, opacity: 0.9 }} />
+      </div>
+    </div>
+  );
+
+  const priceHeadline = (() => {
+    if (!plan || !currentTier) return "—";
+    if (currentTier.price_display?.trim()) return currentTier.price_display;
+    if (plan.plan === "free") return "$0 · included limits";
+    if (plan.plan === "admin") return "Internal";
+    return stripeEnabled ? "Billed in Stripe" : "Set price labels or Stripe prices";
+  })();
+  const subBadgeBad = plan?.subscription_status?.toLowerCase() === "past_due";
+  const canUpgradeCheckout =
+    Boolean(upgradeTargetTier && stripeEnabled && upgradeTargetTier.price_id && upgradeTargetTier.plan !== plan?.plan);
 
   return (
-    <div style={{ padding: "22px 26px", overflowY: "auto", height: "100%" }}>
-      <div style={{
-        background: C.bgCard,
-        border: `1px solid ${C.bd}`,
-        borderRadius: 16,
-        padding: "18px 20px",
-        marginBottom: 14,
-      }}>
-        <div style={{ fontFamily: C.serif, fontSize: 22, color: C.t1, marginBottom: 4 }}>Usage & Billing</div>
-        <div style={{ fontSize: 12, color: C.t2 }}>
-          {plan ? `${plan.plan[0].toUpperCase()}${plan.plan.slice(1)} plan` : "Plan"} ·{" "}
-          {plan?.billing_grace_until ? `Grace until ${new Date(plan.billing_grace_until).toLocaleDateString()}` : "Renews soon"}
+    <div style={{ padding: "22px 26px", overflowY: "auto", height: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div
+        style={{
+          background: C.bgCard,
+          border: `1px solid ${C.bd}`,
+          borderRadius: 16,
+          padding: "18px 20px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontFamily: C.serif, fontSize: 22, color: C.t1, marginBottom: 4 }}>Usage & Billing</div>
+            <div style={{ fontSize: 12, color: C.t2 }}>{billingHeroSubtitle}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn variant="ghost" onClick={() => reloadBilling()} disabled={loading} style={{ fontSize: 11 }}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </Btn>
+            <Btn
+              variant="primary"
+              onClick={() => void openPortal()}
+              disabled={!stripeEnabled || portalBusy || !orgId}
+              style={{ fontSize: 11 }}
+            >
+              {portalBusy ? "Opening…" : stripeEnabled ? "Billing portal" : "Stripe not configured"}
+            </Btn>
+          </div>
         </div>
       </div>
 
       {err && (
-        <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 8, fontSize: 12, color: C.red, marginBottom: 14 }}>
+        <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 8, fontSize: 12, color: C.red }}>
           {err}
         </div>
       )}
 
-      <div style={{ maxWidth: 420, marginBottom: 12 }}>
+      <div style={{ maxWidth: 440 }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
           Organization
         </div>
@@ -1557,111 +1807,376 @@ function BillingPanel() {
         </select>
       </div>
 
+      <div
+        style={{
+          fontSize: 11,
+          color: C.t2,
+          lineHeight: 1.55,
+          padding: "11px 14px",
+          borderRadius: 10,
+          border: `1px solid ${C.bd}`,
+          background: "rgba(255,255,255,0.02)",
+        }}
+      >
+        <strong style={{ color: C.t1 }}>Billing portal.</strong>{" "}
+        Payment methods, invoices, and subscription changes use Stripe&apos;s hosted{" "}
+        <a href="https://docs.stripe.com/customer-management" target="_blank" rel="noreferrer" style={{ color: C.accent }}>
+          Customer Portal
+        </a>
+        . Setup:{" "}
+        <Link to="/billing" style={{ color: C.accent, fontWeight: 600 }}>
+          open billing
+        </Link>
+        {" · "}
+        <span style={{ color: C.t3 }}>docs/configuration/STRIPE.md</span>
+      </div>
+
       {plan && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
-          <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "16px 16px 14px" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.t1, marginBottom: 4 }}>
-                  {plan.plan[0].toUpperCase() + plan.plan.slice(1)} Plan
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: C.t1, fontFamily: C.mono }}>
-                  ${Math.max(99, Math.round(plan.queries_per_month / 20))}
-                  <span style={{ fontSize: 12, color: C.t3, fontWeight: 600, marginLeft: 6, fontFamily: C.sans }}>/month</span>
-                </div>
-              </div>
-              <Badge label={plan.subscription_status || "Active"} color={C.accent} bg="rgba(37,99,235,0.12)" border="rgba(37,99,235,0.25)" />
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12, fontSize: 12, color: C.t2 }}>
-              <div>{plan.seats_max} users included</div>
-              <div>{plan.connectors_max} connectors included</div>
-              <div>{plan.queries_per_month.toLocaleString()} queries/month</div>
-              <div>Admin analytics</div>
-              <div>Email + chat support</div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Btn variant="ghost" style={{ fontSize: 11 }}>Change plan</Btn>
-              <Btn variant="ghost" style={{ fontSize: 11 }}>Download invoice</Btn>
-            </div>
-
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 10 }}>Current period usage</div>
-
-              {[
-                { label: "Queries", left: `${plan.queries_per_day.toLocaleString()} / ${plan.queries_per_month.toLocaleString()}`, pct: queryPct, color: C.green },
-                { label: "Team members", left: `${plan.seats_used} / ${plan.seats_max}`, pct: seatPct, color: C.green },
-                { label: "Active connectors", left: `${plan.connectors_used} / ${plan.connectors_max}`, pct: connPct, color: C.gold },
-              ].map((row) => (
-                <div key={row.label} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.t2, marginBottom: 6 }}>
-                    <span>{row.label}</span>
-                    <span style={{ fontFamily: C.mono }}>{row.left}</span>
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 320px)",
+              gap: 14,
+              alignItems: "start",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+              <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "18px 18px 16px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.t1, marginBottom: 4 }}>
+                      {formatBillingPlanLabel(plan.plan)} plan
+                    </div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: C.t1, letterSpacing: "-0.02em" }}>{priceHeadline}</div>
                   </div>
-                  <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 999, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${row.pct}%`, background: row.color, borderRadius: 999, opacity: 0.85 }} />
+                  <Badge
+                    label={formatSubscriptionStatusLabel(plan.subscription_status)}
+                    color={subBadgeBad ? C.red : C.accent}
+                    bg={subBadgeBad ? "rgba(239,68,68,0.12)" : "rgba(37,99,235,0.12)"}
+                    border={subBadgeBad ? "rgba(239,68,68,0.28)" : "rgba(37,99,235,0.25)"}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px 14px",
+                    fontSize: 11,
+                    color: C.t2,
+                    lineHeight: 1.45,
+                    marginBottom: 14,
+                  }}
+                >
+                  {planFeatureBullets.map((line, i) => (
+                    <div key={`pf-${i}-${line}`} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                      <span style={{ color: C.accent, marginTop: 2 }}>●</span>
+                      <span>{line}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+                  <Btn variant="ghost" onClick={() => planCompareRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ fontSize: 11 }}>
+                    Change plan
+                  </Btn>
+                  <Btn
+                    variant="ghost"
+                    onClick={() => {
+                      if (latestInvoicePdf?.invoice_pdf_url) {
+                        window.open(latestInvoicePdf.invoice_pdf_url, "_blank", "noopener,noreferrer");
+                      } else {
+                        void openPortal();
+                      }
+                    }}
+                    disabled={!stripeEnabled && !latestInvoicePdf}
+                    style={{ fontSize: 11 }}
+                  >
+                    {latestInvoicePdf ? "Download invoice" : "Invoices in Stripe"}
+                  </Btn>
+                </div>
+                <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 10 }}>Current period usage</div>
+                  <UsageRow
+                    label="Queries (this month)"
+                    left={`${queriesUsed.toLocaleString()} / ${plan.queries_per_month.toLocaleString()}`}
+                    pct={queryPct}
+                    color="#34d399"
+                  />
+                  {!rateLimitRedis && (
+                    <div style={{ fontSize: 10, color: C.t3, marginTop: -4, marginBottom: 8 }}>
+                      Redis rate-limit store is off; usage may show as zero until queries run with Redis enabled.
+                    </div>
+                  )}
+                  <UsageRow
+                    label="Team members"
+                    left={`${plan.seats_used.toLocaleString()} / ${plan.seats_max.toLocaleString()}`}
+                    pct={seatPct}
+                    color={C.accent}
+                  />
+                  <UsageRow
+                    label="Active connectors"
+                    left={`${plan.connectors_used.toLocaleString()} / ${plan.connectors_max.toLocaleString()}`}
+                    pct={connPct}
+                    color={C.gold}
+                  />
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.t2 }}>
+                    Burst caps: {plan.queries_per_day.toLocaleString()} / day
+                    {plan.queries_per_hour == null ? "" : ` · ${plan.queries_per_hour.toLocaleString()} / hour`}
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
 
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 10 }}>Invoice history</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {invoiceRows.map((inv) => (
-                  <div key={inv.date} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", padding: "8px 10px", borderRadius: 10, border: `1px solid ${C.bd}`, background: "rgba(255,255,255,0.02)" }}>
-                    <span style={{ fontSize: 12, color: C.t2 }}>{inv.date}</span>
-                    <Badge label={inv.status} color={C.green} bg="rgba(16,185,129,0.12)" border="rgba(16,185,129,0.25)" />
-                    <span style={{ fontSize: 12, color: C.t1, fontFamily: C.mono }}>{inv.amount}</span>
+              <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "14px 16px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.t1 }}>Invoice history</div>
+                  <div style={{ fontSize: 11, color: C.t3 }}>
+                    {invoices.length > 0 ? `${invoices.length} recent` : "None yet"}
                   </div>
-                ))}
+                </div>
+                {invoices.length === 0 ? (
+                  <div style={{ fontSize: 12, color: C.t2, lineHeight: 1.5 }}>
+                    Invoices appear after Stripe billing. Open the portal to add a payment method or review past charges.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {invoices.slice(0, 6).map((inv) => (
+                      <div
+                        key={inv.invoice_id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0,1.2fr) auto auto auto",
+                          gap: 10,
+                          alignItems: "center",
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          border: `1px solid ${C.bd}`,
+                          background: "rgba(255,255,255,0.02)",
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>
+                            {inv.number || inv.invoice_id}
+                          </div>
+                          <div style={{ fontSize: 10, color: C.t3 }}>
+                            {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : "—"}
+                          </div>
+                        </div>
+                        <Badge
+                          label={inv.status || "unknown"}
+                          color={inv.status === "paid" ? C.green : C.t2}
+                          bg={inv.status === "paid" ? "rgba(16,185,129,0.12)" : "rgba(148,163,184,0.15)"}
+                          border={inv.status === "paid" ? "rgba(16,185,129,0.25)" : "rgba(148,163,184,0.25)"}
+                        />
+                        <span style={{ fontSize: 12, color: C.t1, fontFamily: C.mono }}>
+                          {fmtMoney(inv.currency, inv.total_cents)}
+                        </span>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          {inv.hosted_invoice_url && (
+                            <a
+                              href={inv.hosted_invoice_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ fontSize: 11, color: C.accent, textDecoration: "none" }}
+                            >
+                              View
+                            </a>
+                          )}
+                          {inv.invoice_pdf_url && (
+                            <a
+                              href={inv.invoice_pdf_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ fontSize: 11, color: C.accent, textDecoration: "none" }}
+                            >
+                              PDF
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "16px 16px 14px" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.t1, marginBottom: 6 }}>Upgrade to Scale</div>
-              <div style={{ fontSize: 12, color: C.t2, lineHeight: 1.55, marginBottom: 12 }}>
-                You are using {connPct}% of connectors. Scale includes more connectors, SSO, audit logs, and priority support.
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div
+                style={{
+                  background: "linear-gradient(180deg, rgba(37,99,235,0.14) 0%, rgba(15,23,42,0.4) 100%)",
+                  border: `1px solid rgba(37,99,235,0.35)`,
+                  borderRadius: 14,
+                  padding: "16px 16px 14px",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.t1, marginBottom: 8 }}>
+                  {upgradeTargetTier ? `Upgrade to ${formatBillingPlanLabel(upgradeTargetTier.plan)}` : "You're on our top self-serve tier"}
+                </div>
+                <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.55, marginBottom: 12 }}>{upgradeHook}</div>
+                {upgradeTargetTier?.price_display?.trim() && (
+                  <div style={{ fontSize: 18, fontWeight: 800, color: C.t1, marginBottom: 12 }}>{upgradeTargetTier.price_display}</div>
+                )}
+                {upgradeTargetTier ? (
+                  <Btn
+                    variant="primary"
+                    disabled={!canUpgradeCheckout || checkoutPlanBusy === upgradeTargetTier.plan}
+                    onClick={() => void startCheckout(upgradeTargetTier)}
+                    style={{ width: "100%", justifyContent: "center", fontSize: 12, padding: "10px 12px" }}
+                  >
+                    {checkoutPlanBusy === upgradeTargetTier.plan
+                      ? "Redirecting…"
+                      : canUpgradeCheckout
+                        ? `Upgrade to ${formatBillingPlanLabel(upgradeTargetTier.plan)} →`
+                        : stripeEnabled
+                          ? "Configure Stripe price"
+                          : "Stripe unavailable"}
+                  </Btn>
+                ) : (
+                  <Btn variant="ghost" onClick={() => planCompareRef.current?.scrollIntoView({ behavior: "smooth" })} style={{ width: "100%", justifyContent: "center", fontSize: 11 }}>
+                    View plans
+                  </Btn>
+                )}
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.t1, fontFamily: C.mono, marginBottom: 12 }}>
-                ${Math.max(199, Math.round(Math.max(99, plan.queries_per_month / 20) * 1.8))}
-                <span style={{ fontSize: 12, color: C.t3, fontWeight: 600, marginLeft: 6, fontFamily: C.sans }}>/month</span>
-              </div>
-              <Btn variant="primary" style={{ width: "100%", justifyContent: "center" }}>
-                Upgrade to Scale →
-              </Btn>
-            </div>
 
-            <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "16px 16px 14px" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 10 }}>Payment method</div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 10px", borderRadius: 12, border: `1px solid ${C.bd}`, background: "rgba(255,255,255,0.02)" }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: C.t1, border: `1px solid ${C.bd}`, background: C.bgE, borderRadius: 10, padding: "6px 8px" }}>
-                  VISA
+              <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.t1, marginBottom: 4 }}>Payment method</div>
+                    <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.45 }}>
+                      Cards and bank debits are managed in Stripe Customer Portal.
+                    </div>
+                  </div>
+                  <Btn
+                    variant="ghost"
+                    onClick={() => void openPortal()}
+                    disabled={!stripeEnabled || portalBusy || !orgId}
+                    style={{ fontSize: 11, flexShrink: 0 }}
+                  >
+                    Update
+                  </Btn>
                 </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.t1 }}>Visa ending in 4242</div>
-                  <div style={{ fontSize: 11, color: C.t2 }}>Expires 08/2027</div>
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.t1, marginBottom: 6 }}>Need help?</div>
+                <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.5, marginBottom: 10 }}>
+                  Questions about your plan, invoices, or custom enterprise pricing?
                 </div>
-                <Btn variant="ghost" style={{ marginLeft: "auto", fontSize: 11, padding: "6px 10px" }}>
-                  Update
+                {contactSalesEmail ? (
+                  <a
+                    href={`mailto:${contactSalesEmail}`}
+                    style={{ fontSize: 12, color: C.accent, fontWeight: 600, textDecoration: "none" }}
+                  >
+                    Talk to sales →
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void openPortal()}
+                    disabled={!stripeEnabled}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: stripeEnabled ? "pointer" : "default",
+                      fontSize: 12,
+                      color: C.accent,
+                      fontWeight: 600,
+                      fontFamily: C.sans,
+                    }}
+                  >
+                    Open billing portal →
+                  </button>
+                )}
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.t3, marginBottom: 6 }}>Plan controls</div>
+                <Btn
+                  variant="ghost"
+                  onClick={() => void openPortal()}
+                  disabled={!stripeEnabled || portalBusy || !orgId}
+                  style={{ width: "100%", justifyContent: "center", marginBottom: 6, fontSize: 11 }}
+                >
+                  {portalBusy ? "Opening…" : "Manage subscription in Stripe"}
                 </Btn>
+                <Btn variant="ghost" onClick={() => reloadBilling()} disabled={loading} style={{ width: "100%", justifyContent: "center", fontSize: 11 }}>
+                  {loading ? "Refreshing…" : "Refresh usage & limits"}
+                </Btn>
+                {!stripeEnabled && (
+                  <div style={{ marginTop: 8, fontSize: 10, color: C.t3 }}>
+                    Stripe is off in this environment; upgrade buttons need Checkout configured.
+                  </div>
+                )}
               </div>
-            </div>
-
-            <div style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "16px 16px 14px" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 6 }}>Need help?</div>
-              <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.55, marginBottom: 10 }}>
-                Questions about your plan or custom enterprise pricing?
-              </div>
-              <Btn variant="ghost" style={{ width: "100%", justifyContent: "center", fontSize: 11 }}>
-                Talk to sales →
-              </Btn>
             </div>
           </div>
-        </div>
+
+          <div ref={planCompareRef} style={{ background: C.bgCard, border: `1px solid ${C.bd}`, borderRadius: 14, padding: "16px 16px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>Plan comparison</div>
+              <div style={{ fontSize: 11, color: C.t3 }}>Limits enforced by the API · checkout when Stripe is configured</div>
+            </div>
+            {orderedCatalog.length === 0 ? (
+              <div style={{ fontSize: 12, color: C.t2 }}>No plan catalog available.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+                {orderedCatalog.map((tier) => {
+                  const active = tier.plan === plan.plan;
+                  const canCheckout = stripeEnabled && Boolean(tier.price_id) && !active;
+                  return (
+                    <div
+                      key={`plan-card-${tier.plan}`}
+                      style={{
+                        border: `1px solid ${active ? C.accent : C.bd}`,
+                        background: active ? "rgba(37,99,235,0.08)" : "rgba(255,255,255,0.02)",
+                        borderRadius: 10,
+                        padding: "10px 10px 9px",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: C.t1 }}>{formatBillingPlanLabel(tier.plan)}</div>
+                        {active && (
+                          <Badge
+                            label="Current"
+                            color={C.accent}
+                            bg="rgba(37,99,235,0.12)"
+                            border="rgba(37,99,235,0.25)"
+                          />
+                        )}
+                      </div>
+                      {tier.price_display?.trim() && (
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.t1, marginBottom: 8 }}>{tier.price_display}</div>
+                      )}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: C.t2, marginBottom: 10 }}>
+                        <div>{tier.seats_max.toLocaleString()} seats</div>
+                        <div>{tier.connectors_max.toLocaleString()} connectors</div>
+                        <div>{tier.queries_per_day.toLocaleString()} queries/day</div>
+                        <div>{tier.queries_per_month.toLocaleString()} queries/month</div>
+                        <div>{tier.queries_per_hour == null ? "No hourly cap" : `${tier.queries_per_hour.toLocaleString()} queries/hour`}</div>
+                      </div>
+                      <Btn
+                        variant={active ? "ghost" : "primary"}
+                        disabled={active || !canCheckout || checkoutPlanBusy === tier.plan}
+                        onClick={() => void startCheckout(tier)}
+                        style={{ width: "100%", justifyContent: "center", fontSize: 11 }}
+                      >
+                        {active
+                          ? "Current plan"
+                          : checkoutPlanBusy === tier.plan
+                            ? "Redirecting…"
+                            : canCheckout
+                              ? "Choose plan"
+                              : !stripeEnabled
+                                ? "Stripe unavailable"
+                                : "Price not configured"}
+                      </Btn>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -2244,7 +2759,7 @@ function SettingsPanel({
           onSaved={onSavedOrg}
           showDangerZone
           onOrgDeleted={onOrgDeleted}
-          isPlatformOwner={isPlatformOwner}
+          canManageCloudCredentials={canManageOrgSettings}
         />
       ) : canManageWorkspaceSettings ? (
         <>

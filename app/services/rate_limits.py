@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _redis: redis.Redis | None = None
 
-CONNECTOR_SYNC_PER_HOUR = 10
+CONNECTOR_SYNC_PER_HOUR = max(1, int(settings.connector_sync_per_hour))
 PRIVILEGED_READ_API_PER_HOUR = 1000
 
 
@@ -43,6 +43,20 @@ def _client() -> redis.Redis | None:
 def get_redis_client() -> redis.Redis | None:
     """Shared Redis connection for rate limits, billing plan cache, etc."""
     return _client()
+
+
+def get_org_query_month_usage(organization_id: UUID) -> int:
+    """Queries counted this UTC calendar month (same Redis key as enforce_org_query_limits)."""
+    r = _client()
+    if r is None:
+        return 0
+    now = datetime.now(timezone.utc)
+    month_key = f"rl:{organization_id}:query:month:{now.strftime('%Y%m')}"
+    try:
+        raw = r.get(month_key)
+        return max(0, int(raw or 0))
+    except (redis.RedisError, ValueError, TypeError):
+        return 0
 
 
 def _ttl_until_end_of_utc_day() -> int:

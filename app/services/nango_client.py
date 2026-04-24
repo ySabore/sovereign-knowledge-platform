@@ -11,14 +11,18 @@ All upstream paths are sent to: `{NANGO_HOST}/proxy{path}` with headers:
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.config import settings
+from app.services.ingestion import extract_pages_from_upload
 from app.services.text_cleaner import clean_text_for_ingestion
 
 logger = logging.getLogger(__name__)
@@ -110,8 +114,59 @@ def nango_proxy_get_json(
         upstream_path=upstream_path,
         params=params,
     )
-    r.raise_for_status()
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = (exc.response.text or "").strip().replace("\n", " ")
+        body_preview = body[:500] if body else "<no response body>"
+        raise RuntimeError(
+            f"Nango proxy GET {upstream_path} failed ({exc.response.status_code}): {body_preview}"
+        ) from exc
     return r.json()
+
+
+def create_connect_session(
+    *,
+    allowed_integrations: list[str],
+    tags: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """
+    Create a short-lived Nango Connect Session token.
+    Docs: POST /connect/sessions
+    """
+    if not nango_configured():
+        raise RuntimeError("NANGO_SECRET_KEY is not set")
+    url = f"{settings.nango_host.rstrip('/')}/connect/sessions"
+    payload: dict[str, Any] = {
+        "allowed_integrations": [x.strip() for x in allowed_integrations if x and x.strip()],
+    }
+    if tags:
+        payload["tags"] = {str(k).lower(): str(v) for k, v in tags.items() if v}
+    timeout = settings.ollama_http_timeout_seconds
+    with httpx.Client(timeout=timeout) as client:
+        r = client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.nango_secret_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = (exc.response.text or "").strip().replace("\n", " ")
+        body_preview = body[:500] if body else "<no response body>"
+        raise RuntimeError(
+            f"Nango connect session create failed ({exc.response.status_code}): {body_preview}"
+        ) from exc
+    data = r.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("Invalid Nango connect session response payload")
+    wrapped = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(wrapped, dict) or not str(wrapped.get("token") or "").strip():
+        raise RuntimeError("Nango connect session token missing in response")
+    return wrapped
 
 
 def get_connect_ui_instructions(integration_id: str, connection_id: str) -> dict[str, str]:
@@ -225,16 +280,269 @@ def _fetch_confluence(
     return results, next_cursor
 
 
+_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+_DRIVE_DOC_MIME = "application/vnd.google-apps.document"
+_DRIVE_SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+_DRIVE_SLIDES_MIME = "application/vnd.google-apps.presentation"
+_DRIVE_EXPORT_SPECS: dict[str, tuple[str, str]] = {
+    _DRIVE_DOC_MIME: ("text/plain", ".txt"),
+    _DRIVE_SHEET_MIME: (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ),
+    _DRIVE_SLIDES_MIME: (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".pptx",
+    ),
+}
+_DRIVE_BINARY_SUPPORTED_MIME: set[str] = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "text/plain",
+    "text/csv",
+    "text/markdown",
+    "text/html",
+    "application/rtf",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/tiff",
+}
+_DRIVE_CURSOR_PREFIX = "gdv2:"
+
+
+def sanitize_drive_folder_ids(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if not s or len(s) > 256:
+            continue
+        if all(c.isalnum() or c in "_-" for c in s):
+            out.append(s)
+    return out
+
+
+def _drive_walk_encode(state: dict[str, Any]) -> str:
+    blob = json.dumps(state, separators=(",", ":")).encode()
+    return _DRIVE_CURSOR_PREFIX + base64.urlsafe_b64encode(blob).decode().rstrip("=")
+
+
+def _drive_walk_decode(cursor: str) -> dict[str, Any] | None:
+    if not cursor.startswith(_DRIVE_CURSOR_PREFIX):
+        return None
+    pad = "=" * (-(len(cursor) - len(_DRIVE_CURSOR_PREFIX)) % 4)
+    try:
+        raw = base64.urlsafe_b64decode((cursor[len(_DRIVE_CURSOR_PREFIX) :] + pad).encode())
+        data = json.loads(raw.decode())
+        return data if isinstance(data, dict) else None
+    except (ValueError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _drive_export_file(
+    connection_id: str,
+    provider_config_key: str,
+    f: dict[str, Any],
+) -> DocumentFetchResult:
+    fid = str(f.get("id") or "")
+    mime = str(f.get("mimeType") or "")
+    name = str(f.get("name") or fid)[:500]
+    url = str(f.get("webViewLink") or fid)
+    when = _parse_iso_dt(f.get("modifiedTime"))
+    text = ""
+    if mime in _DRIVE_EXPORT_SPECS:
+        export_mime, ext = _DRIVE_EXPORT_SPECS[mime]
+        r = nango_proxy_request(
+            "GET",
+            connection_id=connection_id,
+            provider_config_key=provider_config_key,
+            upstream_path=f"/drive/v3/files/{fid}/export",
+            params={"mimeType": export_mime},
+        )
+        r.raise_for_status()
+        text = _extract_text_from_bytes_for_ingestion(r.content, f"{name}{ext}")
+    elif mime in _DRIVE_BINARY_SUPPORTED_MIME:
+        r = nango_proxy_request(
+            "GET",
+            connection_id=connection_id,
+            provider_config_key=provider_config_key,
+            upstream_path=f"/drive/v3/files/{fid}",
+            params={"alt": "media"},
+        )
+        r.raise_for_status()
+        text = _extract_text_from_bytes_for_ingestion(r.content, _drive_filename_for_binary(f))
+    else:
+        logger.info("drive skip unsupported mime=%s file_id=%s", mime, fid)
+    return DocumentFetchResult(
+        external_id=fid,
+        name=name,
+        content=text,
+        url=url,
+        last_modified=when,
+        metadata={"drive": f},
+    )
+
+
+def _drive_filename_for_binary(f: dict[str, Any]) -> str:
+    name = str(f.get("name") or f.get("id") or "drive-file")
+    ext = str(f.get("fileExtension") or "").strip().lower()
+    if ext and not name.lower().endswith(f".{ext}"):
+        return f"{name}.{ext}"
+    return name
+
+
+def _extract_text_from_bytes_for_ingestion(raw: bytes, filename: str) -> str:
+    safe_name = Path(filename).name or "drive-file"
+    suffix = Path(safe_name).suffix or ".txt"
+    with tempfile.NamedTemporaryFile(prefix="nango-drive-", suffix=suffix, delete=False) as tmp:
+        tmp.write(raw)
+        tmp_path = tmp.name
+    try:
+        pages = extract_pages_from_upload(tmp_path, safe_name)
+        text = "\n\n".join((p.text or "").strip() for p in pages if (p.text or "").strip())
+        if text.strip():
+            return text
+        if suffix == ".txt":
+            return clean_text_for_ingestion(raw.decode("utf-8", errors="replace"), strip_html=False)
+        return ""
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _fetch_google_drive_folder_walk(
+    connection_id: str,
+    provider_config_key: str,
+    cursor: str | None,
+    cfg: dict[str, Any],
+    folder_ids: list[str],
+) -> tuple[list[DocumentFetchResult], str | None]:
+    include_sub = bool(cfg.get("drive_include_subfolders", True))
+    list_page_size = min(100, max(10, int(cfg.get("drive_list_page_size", 50))))
+    batch_export = min(50, max(1, int(cfg.get("page_size", 10))))
+
+    state: dict[str, Any]
+    if cursor and (decoded := _drive_walk_decode(cursor)):
+        state = decoded
+    else:
+        state = {
+            "queue": list(folder_ids),
+            "listed": [],
+            "cur_folder": None,
+            "list_token": None,
+            "exports": [],
+        }
+
+    listed: set[str] = set(str(x) for x in (state.get("listed") or []) if x)
+    queue: list[str] = [str(x) for x in (state.get("queue") or []) if x]
+    exports: list[dict[str, Any]] = list(state.get("exports") or [])
+    cur_folder: str | None = state.get("cur_folder")
+    list_token: str | None = state.get("list_token")
+
+    out: list[DocumentFetchResult] = []
+
+    def persist() -> str:
+        state.clear()
+        state["queue"] = queue
+        state["listed"] = sorted(listed)
+        state["cur_folder"] = cur_folder
+        state["list_token"] = list_token
+        state["exports"] = exports
+        return _drive_walk_encode(state)
+
+    while len(out) < batch_export:
+        while exports:
+            fmeta = exports.pop(0)
+            fid = fmeta.get("id")
+            if not fid:
+                continue
+            try:
+                doc = _drive_export_file(connection_id, provider_config_key, fmeta)
+            except Exception as exc:
+                logger.warning("drive export failed id=%s: %s", fid, exc)
+                continue
+            out.append(doc)
+            if len(out) >= batch_export:
+                return out, persist() if (queue or exports or cur_folder or list_token) else None
+
+        while cur_folder is None and queue:
+            nxt = queue.pop(0)
+            if nxt in listed:
+                continue
+            cur_folder = nxt
+            list_token = None
+            break
+
+        if cur_folder is None:
+            return out, None
+
+        q = f"'{cur_folder}' in parents and trashed = false"
+        params: dict[str, Any] = {
+            "q": q,
+            "pageSize": list_page_size,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+            "fields": "files(id,name,fileExtension,mimeType,modifiedTime,webViewLink),nextPageToken",
+        }
+        if list_token:
+            params["pageToken"] = list_token
+        data = nango_proxy_get_json(
+            connection_id=connection_id,
+            provider_config_key=provider_config_key,
+            upstream_path="/drive/v3/files",
+            params=params,
+        )
+        listed.add(cur_folder)
+        for f in data.get("files") or []:
+            mime = str(f.get("mimeType") or "")
+            fid = f.get("id")
+            if not fid:
+                continue
+            if mime == _DRIVE_FOLDER_MIME:
+                if include_sub and str(fid) not in listed:
+                    queue.append(str(fid))
+            elif mime in _DRIVE_EXPORT_SPECS or mime in _DRIVE_BINARY_SUPPORTED_MIME:
+                exports.append(dict(f))
+
+        list_token = data.get("nextPageToken")
+        if not list_token:
+            cur_folder = None
+
+        if not queue and not exports and cur_folder is None:
+            return out, None
+
+    return out, persist()
+
+
 def _fetch_google_drive(
     connection_id: str,
     provider_config_key: str,
     cursor: str | None,
     cfg: dict[str, Any],
 ) -> tuple[list[DocumentFetchResult], str | None]:
-    q = "mimeType contains 'application/vnd.google-apps.document' or mimeType contains 'text/plain'"
-    params: dict[str, Any] = {"q": q, "pageSize": 10, "fields": "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken"}
+    folder_ids = sanitize_drive_folder_ids(cfg.get("drive_folder_ids"))
+    if folder_ids:
+        return _fetch_google_drive_folder_walk(
+            connection_id, provider_config_key, cursor, cfg, folder_ids
+        )
+
+    # Keep the query conservative for Drive v3; broad/contains predicates on mimeType
+    # can trigger 400 in some tenant + proxy combinations.
+    q = f"trashed = false and mimeType = '{_DRIVE_DOC_MIME}'"
+    params: dict[str, Any] = {
+        "q": q,
+        "pageSize": int(cfg.get("page_size", 10)),
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "fields": "files(id,name,fileExtension,mimeType,modifiedTime,webViewLink),nextPageToken",
+    }
     if cursor:
         params["pageToken"] = cursor
+
     data = nango_proxy_get_json(
         connection_id=connection_id,
         provider_config_key=provider_config_key,
@@ -246,25 +554,14 @@ def _fetch_google_drive(
         fid = f.get("id")
         if not fid:
             continue
-        r = nango_proxy_request(
-            "GET",
-            connection_id=connection_id,
-            provider_config_key=provider_config_key,
-            upstream_path=f"/drive/v3/files/{fid}/export",
-            params={"mimeType": "text/plain"},
-        )
-        r.raise_for_status()
-        text = clean_text_for_ingestion(r.text, strip_html=False)
-        out.append(
-            DocumentFetchResult(
-                external_id=str(fid),
-                name=str(f.get("name") or fid)[:500],
-                content=text,
-                url=str(f.get("webViewLink") or fid),
-                last_modified=_parse_iso_dt(f.get("modifiedTime")),
-                metadata={"drive": f},
-            )
-        )
+        mime = str(f.get("mimeType") or "")
+        if mime not in _DRIVE_EXPORT_SPECS and mime not in _DRIVE_BINARY_SUPPORTED_MIME:
+            continue
+        try:
+            out.append(_drive_export_file(connection_id, provider_config_key, f))
+        except Exception as exc:
+            logger.warning("drive fetch skip id=%s name=%s err=%s", fid, f.get("name"), exc)
+            continue
     return out, data.get("nextPageToken")
 
 

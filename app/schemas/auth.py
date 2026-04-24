@@ -283,12 +283,18 @@ class ChatSessionCreateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
 
 
+class ChatSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    pinned: bool | None = None
+
+
 class ChatSessionPublic(BaseModel):
     id: UUID
     organization_id: UUID
     workspace_id: UUID
     user_id: UUID | None
     title: str | None
+    pinned: bool
     created_at: datetime
     updated_at: datetime
 
@@ -316,6 +322,9 @@ class ChatMessagePublic(BaseModel):
     content: str
     citations: list[ChatCitationPublic] = Field(default_factory=list)
     feedback: Literal["up", "down"] | None = None
+    confidence: str | None = Field(default=None, description="high | medium | low (retrieval / model signal).")
+    generation_mode: str | None = Field(default=None, description="e.g. ollama, extractive, chitchat.")
+    generation_model: str | None = Field(default=None, description="Model label shown in UI, e.g. qwen3:32b.")
     created_at: datetime
 
 

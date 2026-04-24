@@ -7,6 +7,7 @@ Import `settings` singleton only after env / working directory are set.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,12 @@ class Settings(BaseSettings):
     # --- Rate limiting (SlowAPI) ---
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = Field(default=120, ge=1, le=100000)
+    connector_sync_per_hour: int = Field(
+        default=60,
+        ge=1,
+        le=100000,
+        description="Per-organization connector sync invocations allowed each UTC hour",
+    )
     rate_limit_redis_enabled: bool = Field(
         default=True,
         description="Use Redis (Upstash-compatible rediss://) for org plan tier limits on query/sync/admin routes",
@@ -111,6 +118,21 @@ class Settings(BaseSettings):
     stripe_price_team: str = Field(default="", description="price_… for Team")
     stripe_price_business: str = Field(default="", description="price_… for Business")
     stripe_price_scale: str = Field(default="", description="price_… for Scale")
+    stripe_billing_portal_configuration_id: str = Field(
+        default="",
+        description="Optional bpc_… from Stripe Dashboard → Customer portal → configuration (features/branding)",
+    )
+    billing_plan_price_labels_json: str = Field(
+        default="",
+        description=(
+            'Optional JSON object of plan key → display string for billing UI, e.g. '
+            '{"business":"$500 / month","scale":"$900 / month"}. Keys are lower-case plan names.'
+        ),
+    )
+    contact_sales_email: str = Field(
+        default="",
+        description="If set, exposed in GET /config/public for “Talk to sales” links in the billing UI",
+    )
 
     # --- Nango (connectors) ---
     nango_secret_key: str = Field(default="", description="Server secret for Nango Proxy API")
@@ -119,6 +141,13 @@ class Settings(BaseSettings):
         description="Publishable key for @nangohq/frontend (safe to expose via GET /config/public)",
     )
     nango_host: str = Field(default="https://api.nango.dev", description="Nango API base (proxy at /proxy/...)")
+    connector_catalog_json: str = Field(
+        default="",
+        description=(
+            "Optional JSON array overriding connector cards exposed to UI via /config/public. "
+            "Item shape: {id,name,emoji,description,backendReady}."
+        ),
+    )
 
     # --- RBAC ---
     rbac_mode: str = Field(
@@ -320,15 +349,86 @@ class Settings(BaseSettings):
             "nango_host": self.nango_host,
             "nango_public_key": (self.nango_public_key or "").strip(),
             "nango_configured": bool((self.nango_secret_key or "").strip()),
+            "connector_catalog": self.connector_catalog(),
+            "contact_sales_email": (self.contact_sales_email or "").strip() or None,
             "features": {
                 "public_config_endpoint": self.expose_public_config,
                 "clerk_sign_in": self.clerk_enabled and bool(self.clerk_issuer.strip()),
                 "stripe_billing": bool((self.stripe_secret_key or "").strip().startswith(("sk_", "rk_"))),
-                "nango_connect": bool((self.nango_public_key or "").strip()) and bool((self.nango_secret_key or "").strip()),
+                "nango_connect": bool((self.nango_secret_key or "").strip()),
                 "cohere_rerank": bool((self.cohere_api_key or "").strip())
                 or bool((self.org_llm_fernet_key or "").strip()),
             },
         }
+
+    def connector_catalog(self) -> list[dict[str, Any]]:
+        default_catalog: list[dict[str, Any]] = [
+            {
+                "id": "google-drive",
+                "name": "Google Drive",
+                "emoji": "📁",
+                "description": (
+                    "Google Docs as text. Optionally limit sync to specific folders "
+                    "(and subfolders) via folder IDs from Drive URLs."
+                ),
+                "backendReady": True,
+            },
+            {
+                "id": "confluence",
+                "name": "Confluence",
+                "emoji": "📘",
+                "description": "Wiki pages via your Atlassian site (configure site URL in Nango).",
+                "backendReady": True,
+            },
+            {
+                "id": "notion",
+                "name": "Notion",
+                "emoji": "📓",
+                "description": "Pages returned from Notion search.",
+                "backendReady": True,
+            },
+            {
+                "id": "github",
+                "name": "GitHub",
+                "emoji": "🐙",
+                "description": "Markdown/text from a repo (set owner/repo in connector config).",
+                "backendReady": True,
+            },
+            {
+                "id": "jira",
+                "name": "Jira",
+                "emoji": "🎫",
+                "description": "Issues and descriptions from Jira Cloud.",
+                "backendReady": True,
+            },
+        ]
+        raw = (self.connector_catalog_json or "").strip()
+        if not raw:
+            return default_catalog
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return default_catalog
+        if not isinstance(parsed, list):
+            return default_catalog
+        out: list[dict[str, Any]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            connector_id = str(item.get("id") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not connector_id or not name:
+                continue
+            out.append(
+                {
+                    "id": connector_id,
+                    "name": name,
+                    "emoji": str(item.get("emoji") or "🔌"),
+                    "description": str(item.get("description") or ""),
+                    "backendReady": bool(item.get("backendReady", True)),
+                }
+            )
+        return out or default_catalog
 
 
 settings = Settings()

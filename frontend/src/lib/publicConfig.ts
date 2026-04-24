@@ -1,12 +1,22 @@
 import { api } from "../api/client";
 
 export type PublicConfig = {
+  contact_sales_email?: string | null;
+  rate_limit_redis_enabled?: boolean;
   nango_host?: string;
   nango_public_key?: string;
   nango_configured?: boolean;
+  connector_catalog?: {
+    id: string;
+    name: string;
+    emoji: string;
+    description: string;
+    backendReady: boolean;
+  }[];
   features?: {
     nango_connect?: boolean;
     cohere_rerank?: boolean;
+    stripe_billing?: boolean;
   };
 };
 

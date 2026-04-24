@@ -61,6 +61,9 @@ async def sse_chat_turn_lines(
             role=ChatMessageRole.assistant.value,
             content=answer_text,
             citations_json=citations,
+            confidence="high",
+            generation_mode=generation_mode,
+            generation_model=generation_model_for_mode(generation_mode),
         )
         db.add(assistant_message)
         if should_replace_chat_title(session.title, query, user_turn_count=user_turn_count):
@@ -102,6 +105,9 @@ async def sse_chat_turn_lines(
             role=ChatMessageRole.assistant.value,
             content=CHITCHAT_REPLY,
             citations_json=[],
+            confidence="high",
+            generation_mode="chitchat",
+            generation_model=generation_model_for_mode("chitchat"),
         )
         db.add(assistant_message)
         if should_replace_chat_title(session.title, query, user_turn_count=user_turn_count):
@@ -177,6 +183,9 @@ async def sse_chat_turn_lines(
                     role=ChatMessageRole.assistant.value,
                     content=final_text,
                     citations_json=citations,
+                    confidence=str(confidence).lower() if confidence is not None else None,
+                    generation_mode=generation_mode,
+                    generation_model=generation_model,
                 )
                 db.add(assistant_message)
 

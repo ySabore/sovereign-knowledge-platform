@@ -37,6 +37,16 @@ def _resolve_workspace_id(db: Session, org_id: UUID, cfg: dict[str, Any] | None)
     return ws.id if ws else None
 
 
+def _workspace_effective_config(cfg: dict[str, Any], workspace_id: UUID) -> dict[str, Any]:
+    merged = dict(cfg)
+    raw = cfg.get("workspace_settings")
+    if isinstance(raw, dict):
+        ws_cfg = raw.get(str(workspace_id))
+        if isinstance(ws_cfg, dict):
+            merged.update(ws_cfg)
+    return merged
+
+
 def _ingest_fetch_result(
     db: Session,
     doc: DocumentFetchResult,
@@ -73,6 +83,7 @@ def run_connector_sync(
     *,
     full_sync: bool = False,
     start_cursor: str | None = None,
+    workspace_id_override: UUID | None = None,
 ) -> dict[str, Any]:
     conn = db.get(IntegrationConnector, connector_row_id)
     if conn is None:
@@ -83,9 +94,14 @@ def run_connector_sync(
         return {"status": "error", "detail": "organization not found"}
 
     cfg = conn.config if isinstance(conn.config, dict) else {}
-    workspace_id = _resolve_workspace_id(db, org.id, cfg)
+    workspace_id = workspace_id_override or _resolve_workspace_id(db, org.id, cfg)
     if workspace_id is None:
         return {"status": "error", "detail": "No workspace; set config.workspace_id or create a workspace"}
+    ws = db.get(Workspace, workspace_id)
+    if ws is None or ws.organization_id != org.id:
+        return {"status": "error", "detail": "Workspace not found"}
+
+    effective_cfg = _workspace_effective_config(cfg, workspace_id)
 
     if not nango_configured():
         return {"status": "skipped", "detail": "NANGO_SECRET_KEY not configured"}
@@ -96,14 +112,18 @@ def run_connector_sync(
     processed = 0
     errors: list[str] = []
     cursor: str | None = start_cursor
+    terminal_status = "active"
+    fatal_error: str | None = None
 
+    max_batches = 2000
+    batch_idx = 0
     try:
         while True:
             batch, cursor = fetch_documents(
                 conn.connector_type,
                 conn.nango_connection_id,
                 cursor=cursor,
-                connector_config=cfg,
+                connector_config=effective_cfg,
             )
             for doc in batch:
                 try:
@@ -119,19 +139,42 @@ def run_connector_sync(
                 except Exception as exc:
                     logger.exception("ingest failed for %s", doc.external_id)
                     errors.append(f"{doc.external_id}: {exc}")
-            if not cursor or not full_sync:
+            batch_idx += 1
+            if not cursor:
                 break
+            if batch_idx >= max_batches:
+                logger.warning(
+                    "connector sync stopped after max_batches=%s connector_id=%s",
+                    max_batches,
+                    connector_row_id,
+                )
+                break
+    except Exception as exc:
+        logger.exception("connector sync failed: connector_id=%s", connector_row_id)
+        terminal_status = "error"
+        fatal_error = str(exc)
     finally:
         conn = db.get(IntegrationConnector, connector_row_id)
         if conn:
             conn.last_synced_at = utcnow()
-            conn.status = "active"
+            conn.status = terminal_status
             conn.document_count = processed
             db.commit()
+
+    if fatal_error:
+        return {
+            "status": "error",
+            "connector_id": str(connector_row_id),
+            "workspace_id": str(workspace_id),
+            "documents_ingested": processed,
+            "detail": fatal_error,
+            "errors": errors[:50],
+        }
 
     return {
         "status": "ok",
         "connector_id": str(connector_row_id),
+        "workspace_id": str(workspace_id),
         "documents_ingested": processed,
         "errors": errors[:50],
     }

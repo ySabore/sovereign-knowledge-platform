@@ -35,6 +35,46 @@ class BillingPlanResponse(BaseModel):
     queries_per_month: int
     queries_per_day: int
     queries_per_hour: int | None = None
+    queries_used_month: int = 0
     connectors_used: int
     seats_used: int
     billing_grace_until: str | None = None
+
+
+class BillingPlanTier(BaseModel):
+    plan: str
+    price_id: str | None = None
+    price_display: str | None = None
+    connectors_max: int
+    seats_max: int
+    queries_per_month: int
+    queries_per_day: int
+    queries_per_hour: int | None = None
+
+
+class BillingPlansCatalogResponse(BaseModel):
+    organization_id: UUID
+    current_plan: str
+    plans: list[BillingPlanTier]
+
+
+class BillingInvoiceItem(BaseModel):
+    invoice_id: str
+    number: str | None = None
+    status: str | None = None
+    currency: str
+    total_cents: int
+    amount_due_cents: int
+    amount_paid_cents: int
+    created_at: str | None = None
+    period_start_at: str | None = None
+    period_end_at: str | None = None
+    hosted_invoice_url: str | None = None
+    invoice_pdf_url: str | None = None
+
+
+class BillingInvoicesResponse(BaseModel):
+    organization_id: UUID
+    stripe_enabled: bool
+    customer_id: str | None = None
+    invoices: list[BillingInvoiceItem]

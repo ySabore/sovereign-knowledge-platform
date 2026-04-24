@@ -56,10 +56,29 @@ type HomeSidebarProps = {
   navGroups: NavGroup[];
   panel: Panel;
   onSelectNavItem: (item: NavItem) => void;
-  user: { email?: string | null; is_platform_owner?: boolean } | null;
+  user: {
+    email?: string | null;
+    is_platform_owner?: boolean;
+    org_ids_as_owner?: string[];
+    org_ids_as_workspace_admin?: string[];
+  } | null;
   initials: string;
   onLogout: () => void;
 };
+
+function accountRoleSubtitle(
+  u: {
+    is_platform_owner?: boolean;
+    org_ids_as_owner?: string[];
+    org_ids_as_workspace_admin?: string[];
+  } | null,
+): string {
+  if (!u) return "Member · Workspace access only";
+  if (u.is_platform_owner) return "Platform owner";
+  if ((u.org_ids_as_owner ?? []).length > 0) return "Organization admin";
+  if ((u.org_ids_as_workspace_admin ?? []).length > 0) return "Workspace admin";
+  return "Member · Workspace access only";
+}
 
 export function HomeSidebar({
   navGroups,
@@ -118,6 +137,12 @@ export function HomeSidebar({
       ))}
 
       <div style={{ marginTop: "auto", padding: "12px 14px", borderTop: `1px solid ${C.hairline}` }}>
+        <div style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+          color: C.t3, marginBottom: 8,
+        }}>
+          Account
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <div style={{
             width: 27, height: 27, borderRadius: "50%",
@@ -131,9 +156,9 @@ export function HomeSidebar({
             <div style={{ fontSize: 11, fontWeight: 600, color: C.t1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 130 }}>
               {user?.email}
             </div>
-            {user?.is_platform_owner && (
-              <div style={{ fontSize: 9, color: C.green, fontFamily: C.mono }}>platform owner</div>
-            )}
+            <div style={{ fontSize: 9, color: C.t3 }}>
+              {accountRoleSubtitle(user)}
+            </div>
           </div>
         </div>
         <button

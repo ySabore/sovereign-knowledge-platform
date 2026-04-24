@@ -83,6 +83,7 @@ export default function App() {
             }
           />
           <Route path="/enterprise-ui" element={<EnterpriseUiReplicaPage />} />
+          <Route path="/billing" element={<Navigate to="/home?panel=billing" replace />} />
         </Route>
       </Route>
 

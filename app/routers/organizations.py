@@ -382,6 +382,7 @@ def create_organization(
 
 
 @router.get("/me", response_model=list[OrganizationPublic])
+@limiter.exempt
 def list_my_organizations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -582,6 +583,7 @@ def revoke_organization_invite(
 
 
 @router.post("/invites/accept", response_model=OrganizationMemberPublic)
+@limiter.exempt
 def accept_organization_invite(
     body: OrganizationInviteAcceptRequest,
     db: Session = Depends(get_db),
@@ -605,7 +607,10 @@ def accept_organization_invite(
         db.commit()
         raise HTTPException(status_code=410, detail="Invite has expired")
     if invite.email.lower() != user.email.lower():
-        raise HTTPException(status_code=403, detail="Invite email does not match current user")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Invite is for {invite.email}, but you are signed in as {user.email}. Sign in with the invited email and try again.",
+        )
 
     membership = _get_org_membership(db, invite.organization_id, user.id)
     if membership is None:
@@ -800,18 +805,6 @@ def update_organization(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     patch = body.model_dump(exclude_unset=True)
-    cloud_llm_owner_fields = {
-        "openai_api_key",
-        "anthropic_api_key",
-        "cohere_api_key",
-        "openai_api_base_url",
-        "anthropic_api_base_url",
-    }
-    if cloud_llm_owner_fields.intersection(patch.keys()) and not user.is_platform_owner:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the platform owner can configure cloud LLM credentials for this organization.",
-        )
 
     if "name" in patch and patch["name"] is not None:
         org.name = patch["name"].strip()

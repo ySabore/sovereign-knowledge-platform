@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -26,7 +27,12 @@ from app.models import (
 )
 from app.routers.organizations import _write_audit_log
 from app.services.billing import ensure_connector_slot, invalidate_plan_cache, register_connector_integration
-from app.services.nango_client import normalize_connector_type_for_storage
+from app.services.nango_client import (
+    create_connect_session,
+    nango_configured,
+    normalize_connector_type_for_storage,
+    sanitize_drive_folder_ids,
+)
 from app.services.metrics import list_connectors_for_org
 from app.services.permissions import sync_permissions
 from app.services.rate_limits import enforce_connector_sync_limit
@@ -40,6 +46,20 @@ class ConnectorActivateBody(BaseModel):
     connection_id: str = Field(min_length=1, max_length=512)
     organization_id: UUID | None = None
     workspace_id: UUID | None = Field(default=None, description="Default workspace for sync + ingest")
+    drive_folder_ids: list[str] | None = Field(
+        default=None,
+        description="Google Drive folder IDs to sync (with subfolders if drive_include_subfolders).",
+    )
+    drive_include_subfolders: bool | None = Field(
+        default=None,
+        description="When true (default), recurse into subfolders for drive_folder_ids.",
+    )
+
+
+class ConnectorConfigPatchBody(BaseModel):
+    workspace_id: UUID | None = None
+    drive_folder_ids: list[str] | None = None
+    drive_include_subfolders: bool | None = None
 
 
 class PermissionSyncItem(BaseModel):
@@ -56,6 +76,140 @@ class PermissionSyncBody(BaseModel):
     items: list[PermissionSyncItem]
 
 
+class ConnectSessionBody(BaseModel):
+    integration_id: str = Field(min_length=1, max_length=128)
+    organization_id: UUID
+
+
+def _workspace_config_ids(cfg: dict | None) -> list[str]:
+    if not isinstance(cfg, dict):
+        return []
+    out: list[str] = []
+    raw = cfg.get("workspace_ids")
+    if isinstance(raw, list):
+        for v in raw:
+            s = str(v).strip()
+            if not s:
+                continue
+            try:
+                UUID(s)
+            except ValueError:
+                continue
+            if s not in out:
+                out.append(s)
+    legacy = cfg.get("workspace_id")
+    if legacy:
+        s = str(legacy).strip()
+        try:
+            UUID(s)
+        except ValueError:
+            s = ""
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _workspace_manage_allowed(db: Session, workspace_id: UUID, user_id: UUID) -> bool:
+    row = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user_id,
+            WorkspaceMember.role == WorkspaceMemberRole.workspace_admin.value,
+        )
+        .first()
+    )
+    return row is not None
+
+
+def _require_workspace_connector_manage_access(db: Session, org_id: UUID, workspace_id: UUID, user: User) -> Workspace:
+    ws = db.get(Workspace, workspace_id)
+    if ws is None or ws.organization_id != org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    if user.is_platform_owner:
+        return ws
+    role = _org_membership_role(db, org_id, user.id)
+    if role == OrgMembershipRole.org_owner.value:
+        return ws
+    if _workspace_manage_allowed(db, workspace_id, user.id):
+        return ws
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Connector management requires workspace admin for this workspace or higher",
+    )
+
+
+def _set_connector_workspace_scope(
+    conn: IntegrationConnector,
+    workspace_ids: list[UUID],
+    *,
+    preferred_workspace_id: UUID | None,
+) -> None:
+    cfg = dict(conn.config or {})
+    unique_ids = list(dict.fromkeys(str(wid) for wid in workspace_ids))
+    if unique_ids:
+        cfg["workspace_ids"] = unique_ids
+        if preferred_workspace_id is not None:
+            cfg["workspace_id"] = str(preferred_workspace_id)
+        else:
+            cfg["workspace_id"] = unique_ids[0]
+    else:
+        cfg.pop("workspace_ids", None)
+        cfg.pop("workspace_id", None)
+    conn.config = cfg or None
+
+
+def _workspace_settings_map(cfg: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(cfg, dict):
+        return {}
+    raw = cfg.get("workspace_settings")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in raw.items():
+        key = str(k).strip()
+        if not key or not isinstance(v, dict):
+            continue
+        out[key] = dict(v)
+    return out
+
+
+def _workspace_drive_sync(cfg: dict[str, Any] | None, workspace_id: UUID | None) -> dict[str, Any]:
+    base = dict(cfg or {})
+    if workspace_id is not None:
+        ws_map = _workspace_settings_map(base)
+        ws_cfg = ws_map.get(str(workspace_id))
+        if isinstance(ws_cfg, dict):
+            if "drive_folder_ids" in ws_cfg:
+                base["drive_folder_ids"] = sanitize_drive_folder_ids(ws_cfg.get("drive_folder_ids"))
+            if "drive_include_subfolders" in ws_cfg:
+                base["drive_include_subfolders"] = bool(ws_cfg.get("drive_include_subfolders"))
+    return {
+        "folder_ids": sanitize_drive_folder_ids(base.get("drive_folder_ids")),
+        "include_subfolders": bool(base.get("drive_include_subfolders", True)),
+    }
+
+
+def _update_workspace_drive_sync(
+    cfg: dict[str, Any],
+    *,
+    workspace_id: UUID,
+    drive_folder_ids: list[str] | None,
+    drive_include_subfolders: bool | None,
+) -> None:
+    ws_map = _workspace_settings_map(cfg)
+    scoped = dict(ws_map.get(str(workspace_id)) or {})
+    if drive_folder_ids is not None:
+        scoped["drive_folder_ids"] = sanitize_drive_folder_ids(drive_folder_ids)
+    if drive_include_subfolders is not None:
+        scoped["drive_include_subfolders"] = bool(drive_include_subfolders)
+    ws_map[str(workspace_id)] = scoped
+    if ws_map:
+        cfg["workspace_settings"] = ws_map
+    else:
+        cfg.pop("workspace_settings", None)
+
+
 @router.get("/organization/{organization_id}")
 @limiter.exempt
 def list_organization_connectors(
@@ -66,6 +220,52 @@ def list_organization_connectors(
     """Connector rows for workspace/admin UIs."""
     _require_connector_view_access(db, organization_id, user)
     return list_connectors_for_org(db, organization_id)
+
+
+@router.post("/connect-session")
+@limiter.exempt
+def create_connector_connect_session(
+    body: ConnectSessionBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Issue short-lived Nango Connect session token for browser auth popup."""
+    integration_norm = normalize_connector_type_for_storage(body.integration_id)
+    _require_connector_manage_access(db, body.organization_id, user)
+    if not nango_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="NANGO_SECRET_KEY is not configured on the API",
+        )
+    try:
+        session = create_connect_session(
+            allowed_integrations=[integration_norm],
+            tags={
+                "end_user_id": str(user.id),
+                "end_user_email": user.email,
+                "organization_id": str(body.organization_id),
+            },
+        )
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "Integration does not exist" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Nango integration '{integration_norm}' is not configured. "
+                    "Add/enable this integration in Nango, or mark it as coming soon in connector catalog."
+                ),
+            ) from None
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create connector auth session: {msg}",
+        ) from None
+    return {
+        "integration_id": integration_norm,
+        "token": str(session.get("token")),
+        "expires_at": session.get("expires_at"),
+        "connect_link": session.get("connect_link"),
+    }
 
 
 def _org_membership_role(db: Session, org_id: UUID, user_id: UUID) -> str | None:
@@ -127,7 +327,6 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
 @router.post("/activate")
 @limiter.exempt
 def activate_connector(
-    request: Request,
     body: ConnectorActivateBody,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -141,13 +340,30 @@ def activate_connector(
     if body.organization_id:
         integration_norm = normalize_connector_type_for_storage(body.integration_id)
         _require_connector_manage_access(db, body.organization_id, user)
-        enforce_connector_sync_limit(request, db, body.organization_id, user)
+        target_workspace_id: UUID | None = None
+        if body.workspace_id:
+            _require_workspace_connector_manage_access(db, body.organization_id, body.workspace_id, user)
+            target_workspace_id = body.workspace_id
         try:
             ensure_connector_slot(db, body.organization_id)
             register_connector_integration(db, body.organization_id, integration_norm)
             cfg: dict = {}
-            if body.workspace_id:
-                cfg["workspace_id"] = str(body.workspace_id)
+            if target_workspace_id:
+                cfg["workspace_id"] = str(target_workspace_id)
+                cfg["workspace_ids"] = [str(target_workspace_id)]
+            if integration_norm == "google-drive":
+                if target_workspace_id and (body.drive_folder_ids is not None or body.drive_include_subfolders is not None):
+                    _update_workspace_drive_sync(
+                        cfg,
+                        workspace_id=target_workspace_id,
+                        drive_folder_ids=body.drive_folder_ids,
+                        drive_include_subfolders=body.drive_include_subfolders,
+                    )
+                else:
+                    if body.drive_folder_ids is not None:
+                        cfg["drive_folder_ids"] = sanitize_drive_folder_ids(body.drive_folder_ids)
+                    if body.drive_include_subfolders is not None:
+                        cfg["drive_include_subfolders"] = bool(body.drive_include_subfolders)
             existing = (
                 db.query(IntegrationConnector)
                 .filter(
@@ -159,10 +375,20 @@ def activate_connector(
             if existing:
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
-                if cfg:
-                    merged = dict(existing.config or {})
-                    merged.update(cfg)
-                    existing.config = merged
+                merged = dict(existing.config or {})
+                merged.update(cfg)
+                if target_workspace_id:
+                    scoped_ids: list[UUID] = []
+                    for wid in _workspace_config_ids(merged):
+                        try:
+                            scoped_ids.append(UUID(wid))
+                        except ValueError:
+                            continue
+                    if target_workspace_id not in scoped_ids:
+                        scoped_ids.append(target_workspace_id)
+                    merged["workspace_ids"] = [str(wid) for wid in scoped_ids]
+                    merged["workspace_id"] = str(target_workspace_id)
+                existing.config = merged or None
                 persisted = existing
             else:
                 persisted = IntegrationConnector(
@@ -189,6 +415,151 @@ def activate_connector(
         "connection_id": body.connection_id,
         "connector_id": connector_id_out,
         "detail": "Connector row stored; call POST /connectors/{id}/sync to pull documents via Nango.",
+    }
+
+
+@router.put("/{connector_id}/workspaces/{workspace_id}")
+@limiter.exempt
+def assign_connector_to_workspace(
+    connector_id: UUID,
+    workspace_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Attach an existing connector integration to a workspace scope."""
+    conn = db.get(IntegrationConnector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+    scoped_ids: list[UUID] = []
+    for wid in _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}):
+        try:
+            scoped_ids.append(UUID(wid))
+        except ValueError:
+            continue
+    if workspace_id not in scoped_ids:
+        scoped_ids.append(workspace_id)
+    _set_connector_workspace_scope(conn, scoped_ids, preferred_workspace_id=workspace_id)
+    db.commit()
+    db.refresh(conn)
+    return {
+        "id": str(conn.id),
+        "workspace_ids": _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}),
+        "workspace_id": (conn.config or {}).get("workspace_id") if isinstance(conn.config, dict) else None,
+    }
+
+
+@router.delete("/{connector_id}/workspaces/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.exempt
+def remove_connector_from_workspace(
+    connector_id: UUID,
+    workspace_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Detach a connector from a workspace; delete row if no workspace remains assigned."""
+    conn = db.get(IntegrationConnector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+    scoped_ids: list[UUID] = []
+    for wid in _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}):
+        try:
+            scoped_ids.append(UUID(wid))
+        except ValueError:
+            continue
+    if workspace_id not in scoped_ids:
+        return
+    remaining = [wid for wid in scoped_ids if wid != workspace_id]
+    if not remaining:
+        _write_audit_log(
+            db,
+            actor_user_id=user.id,
+            action=AuditAction.connector_deleted.value,
+            target_type="integration_connector",
+            target_id=conn.id,
+            organization_id=conn.organization_id,
+            workspace_id=workspace_id,
+            metadata={"connector_type": conn.connector_type, "reason": "removed_last_workspace_assignment"},
+        )
+        invalidate_plan_cache(conn.organization_id)
+        db.execute(delete(IntegrationConnector).where(IntegrationConnector.id == connector_id))
+        db.commit()
+        return
+    preferred = None
+    cfg = conn.config if isinstance(conn.config, dict) else {}
+    current_workspace_raw = cfg.get("workspace_id")
+    if current_workspace_raw:
+        try:
+            current_workspace = UUID(str(current_workspace_raw))
+            if current_workspace != workspace_id and current_workspace in remaining:
+                preferred = current_workspace
+        except ValueError:
+            preferred = None
+    _set_connector_workspace_scope(conn, remaining, preferred_workspace_id=preferred)
+    updated_cfg = dict(conn.config or {})
+    ws_settings = _workspace_settings_map(updated_cfg)
+    if ws_settings:
+        ws_settings.pop(str(workspace_id), None)
+        if ws_settings:
+            updated_cfg["workspace_settings"] = ws_settings
+        else:
+            updated_cfg.pop("workspace_settings", None)
+    conn.config = updated_cfg or None
+    db.commit()
+
+
+@router.patch("/{connector_id}/config")
+@limiter.exempt
+def patch_integration_connector_config(
+    connector_id: UUID,
+    body: ConnectorConfigPatchBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Update connector-specific settings (e.g. Google Drive folder scope)."""
+    if body.drive_folder_ids is None and body.drive_include_subfolders is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No config fields to update")
+    conn = db.get(IntegrationConnector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    if body.workspace_id is not None:
+        _require_workspace_connector_manage_access(db, conn.organization_id, body.workspace_id, user)
+        scoped_ids = _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {})
+        if scoped_ids and str(body.workspace_id) not in scoped_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Connector is not enabled for this workspace",
+            )
+    else:
+        _require_connector_manage_access(db, conn.organization_id, user)
+    if conn.connector_type != "google-drive":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PATCH config is only supported for google-drive connectors",
+        )
+    merged = dict(conn.config or {})
+    if body.workspace_id is not None:
+        _update_workspace_drive_sync(
+            merged,
+            workspace_id=body.workspace_id,
+            drive_folder_ids=body.drive_folder_ids,
+            drive_include_subfolders=body.drive_include_subfolders,
+        )
+    else:
+        if body.drive_folder_ids is not None:
+            merged["drive_folder_ids"] = sanitize_drive_folder_ids(body.drive_folder_ids)
+        if body.drive_include_subfolders is not None:
+            merged["drive_include_subfolders"] = bool(body.drive_include_subfolders)
+    conn.config = merged
+    db.commit()
+    db.refresh(conn)
+    drive_sync = _workspace_drive_sync(merged, body.workspace_id)
+    return {
+        "id": str(conn.id),
+        "connector_type": conn.connector_type,
+        "workspace_id": str(body.workspace_id) if body.workspace_id is not None else None,
+        "drive_sync": drive_sync,
     }
 
 
@@ -226,20 +597,29 @@ def sync_connector_now(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     full_sync: bool = False,
+    workspace_id: UUID | None = None,
 ) -> dict:
     """Run a sync: Nango fetch → ingest into default workspace (see connector `config.workspace_id`)."""
     conn = db.get(IntegrationConnector, connector_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
-    _require_connector_manage_access(db, conn.organization_id, user)
+    if workspace_id is not None:
+        _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+        scoped_ids = _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {})
+        if scoped_ids and str(workspace_id) not in scoped_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Connector is not enabled for this workspace",
+            )
+    else:
+        _require_connector_manage_access(db, conn.organization_id, user)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
-    return run_connector_sync(db, connector_id, full_sync=full_sync)
+    return run_connector_sync(db, connector_id, full_sync=full_sync, workspace_id_override=workspace_id)
 
 
 @router.post("/sync-permissions")
 @limiter.exempt
 def sync_connector_permissions(
-    request: Request,
     body: PermissionSyncBody,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -249,7 +629,6 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
-    enforce_connector_sync_limit(request, db, org_id, user)
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)
     return {"updated": n, "connector_id": body.connector_id}

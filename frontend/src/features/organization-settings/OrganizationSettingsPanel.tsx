@@ -154,13 +154,13 @@ export function OrganizationSettingsPanel({
   onSaved,
   showDangerZone,
   onOrgDeleted,
-  isPlatformOwner,
+  canManageCloudCredentials,
 }: {
   org: Org;
   onSaved: (org: Org) => void;
   showDangerZone?: boolean;
   onOrgDeleted?: () => void | Promise<void>;
-  isPlatformOwner?: boolean;
+  canManageCloudCredentials?: boolean;
 }) {
   const C = useOrgShellTokens();
   const [name, setName] = useState(org.name);
@@ -296,7 +296,7 @@ export function OrganizationSettingsPanel({
         retrieval_strategy: retrievalStrat === "" ? null : retrievalStrat,
         use_hosted_rerank: useHostedRerank,
       };
-      if (isPlatformOwner) {
+      if (canManageCloudCredentials) {
         if (clearOpenaiKey) patch.openai_api_key = null;
         else if (openaiKeyDraft.trim()) patch.openai_api_key = openaiKeyDraft.trim();
         if (clearAnthropicKey) patch.anthropic_api_key = null;
@@ -543,10 +543,10 @@ export function OrganizationSettingsPanel({
         </div>
       </OrgSettingsCollapsible>
 
-      {isPlatformOwner ? (
+      {canManageCloudCredentials ? (
         <OrgSettingsCollapsible
           title="Cloud LLM credentials"
-          subtitle="Platform owner only — per-organization API keys and optional API bases"
+          subtitle="Organization admins and platform owners — per-organization API keys and optional API bases"
           defaultOpen={false}
         >
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>

@@ -5,7 +5,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete
+from sqlalchemy import delete, desc
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -39,6 +39,7 @@ from app.schemas.auth import (
     ChatSessionCreateRequest,
     ChatSessionDetailResponse,
     ChatSessionPublic,
+    ChatSessionUpdateRequest,
     ChatTurnResponse,
     DocumentChunkPublic,
     DocumentIngestionResponse,
@@ -58,6 +59,7 @@ from app.services.embeddings import EmbeddingServiceError, get_embedding_client
 from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
 from app.services.permissions import ensure_upload_permission_row
 from app.services.rag import resolve_top_k, run_retrieval_pipeline
+from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.rate_limits import enforce_org_query_limits
 from app.services.workspace_access import resolve_workspace_for_user
 
@@ -135,6 +137,7 @@ def _serialize_session(session: ChatSession) -> ChatSessionPublic:
         workspace_id=session.workspace_id,
         user_id=session.user_id,
         title=session.title,
+        pinned=bool(session.pinned),
         created_at=session.created_at,
         updated_at=session.updated_at,
     )
@@ -210,6 +213,9 @@ def _serialize_message(message: ChatMessage) -> ChatMessagePublic:
         content=message.content,
         citations=citations,
         feedback=message.feedback if message.feedback in {"up", "down"} else None,
+        confidence=message.confidence,
+        generation_mode=message.generation_mode,
+        generation_model=message.generation_model,
         created_at=message.created_at,
     )
 
@@ -239,6 +245,37 @@ def create_chat_session(
         title=normalized_title,
     )
     db.add(session)
+    db.commit()
+    db.refresh(session)
+    return _serialize_session(session)
+
+
+_SESSION_TITLE_DISALLOWED = frozenset({"conversation", "new conversation", "chat"})
+
+
+@router.patch("/sessions/{session_id}", response_model=ChatSessionPublic)
+def update_chat_session(
+    session_id: UUID,
+    body: ChatSessionUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ChatSessionPublic:
+    session = _require_session_for_user(db, session_id, user)
+    if not _can_delete_chat_session(db, session, user):
+        raise HTTPException(status_code=403, detail="Not allowed to update this chat session")
+    payload = body.model_dump(exclude_unset=True)
+    if "title" in payload:
+        raw_title = payload["title"]
+        if raw_title is None:
+            session.title = None
+        else:
+            normalized = raw_title.strip()
+            if not normalized or normalized.lower() in _SESSION_TITLE_DISALLOWED:
+                session.title = None
+            else:
+                session.title = normalized
+    if "pinned" in payload:
+        session.pinned = bool(payload["pinned"])
     db.commit()
     db.refresh(session)
     return _serialize_session(session)
@@ -283,7 +320,7 @@ def list_chat_sessions(
         sessions = (
             db.query(ChatSession)
             .filter(ChatSession.workspace_id == workspace_id)
-            .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+            .order_by(desc(ChatSession.pinned), ChatSession.updated_at.desc(), ChatSession.created_at.desc())
             .all()
         )
     else:
@@ -296,14 +333,14 @@ def list_chat_sessions(
             sessions = (
                 db.query(ChatSession)
                 .filter(ChatSession.workspace_id == workspace_id)
-                .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+                .order_by(desc(ChatSession.pinned), ChatSession.updated_at.desc(), ChatSession.created_at.desc())
                 .all()
             )
         else:
             sessions = (
                 db.query(ChatSession)
                 .filter(ChatSession.workspace_id == workspace_id, ChatSession.user_id == user.id)
-                .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+                .order_by(desc(ChatSession.pinned), ChatSession.updated_at.desc(), ChatSession.created_at.desc())
                 .all()
             )
     return [_serialize_session(session) for session in sessions]
@@ -485,10 +522,12 @@ def create_chat_message(
         .count()
     )
 
+    from_fact = False
     try:
         fact_answer = answer_workspace_fact_query(db, session, user.id, query)
         if fact_answer is not None:
             answer_text, citations, generation_mode = fact_answer
+            from_fact = True
         elif is_low_intent_chitchat(query):
             answer_text, citations, generation_mode = CHITCHAT_REPLY, [], "chitchat"
         else:
@@ -520,12 +559,29 @@ def create_chat_message(
             detail=f"Answer generation unavailable: {exc}",
         ) from exc
 
+    gen_model = generation_model_for_mode(
+        generation_mode, preferred_chat_model=preferred_chat_model_from_org(org)
+    )
+    _, conf_tag = extract_confidence_tag(answer_text)
+    ct = str(conf_tag).lower() if conf_tag else ""
+    if ct in ("high", "medium", "low"):
+        conf_val = ct
+    elif generation_mode == "no_evidence":
+        conf_val = "low"
+    elif generation_mode == "chitchat" or from_fact:
+        conf_val = "high"
+    else:
+        conf_val = "medium"
+
     assistant_message = ChatMessage(
         session_id=session.id,
         user_id=None,
         role=ChatMessageRole.assistant.value,
         content=answer_text,
         citations_json=citations,
+        confidence=conf_val,
+        generation_mode=generation_mode,
+        generation_model=gen_model,
     )
     db.add(assistant_message)
 
@@ -543,9 +599,7 @@ def create_chat_message(
         user_message=_serialize_message(user_message),
         assistant_message=_serialize_message(assistant_message),
         generation_mode=generation_mode,
-        generation_model=generation_model_for_mode(
-            generation_mode, preferred_chat_model=preferred_chat_model_from_org(org)
-        ),
+        generation_model=gen_model,
     )
 
 

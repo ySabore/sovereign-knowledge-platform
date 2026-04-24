@@ -14,7 +14,9 @@ from app.routers.organizations import _require_org_owner
 from app.schemas.billing import (
     BillingCheckoutRequest,
     BillingCheckoutResponse,
+    BillingInvoicesResponse,
     BillingPlanResponse,
+    BillingPlansCatalogResponse,
     BillingPortalRequest,
     BillingPortalResponse,
 )
@@ -24,8 +26,12 @@ from app.services.billing import (
     create_checkout_session,
     create_portal_session,
     get_current_plan_payload,
+    list_invoice_history,
+    list_plan_catalog,
+    normalize_plan_key,
     stripe_configured,
 )
+from app.services.rate_limits import get_org_query_month_usage
 
 router = APIRouter(prefix="/organizations", tags=["billing"])
 
@@ -50,9 +56,56 @@ def get_billing_plan(
         queries_per_month=int(payload["queries_per_month"]),
         queries_per_day=int(payload["queries_per_day"]),
         queries_per_hour=payload.get("queries_per_hour"),
+        queries_used_month=get_org_query_month_usage(org_id),
         connectors_used=count_org_connectors(db, org_id),
         seats_used=count_org_members(db, org_id),
         billing_grace_until=payload.get("billing_grace_until"),
+    )
+
+
+@router.get("/{org_id}/billing/plans", response_model=BillingPlansCatalogResponse)
+def get_billing_plans_catalog(
+    org_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> BillingPlansCatalogResponse:
+    _require_org_owner(db, org_id, user)
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    return BillingPlansCatalogResponse(
+        organization_id=org.id,
+        current_plan=normalize_plan_key(org.plan),
+        plans=list_plan_catalog(),
+    )
+
+
+@router.get("/{org_id}/billing/invoices", response_model=BillingInvoicesResponse)
+def get_billing_invoices(
+    org_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> BillingInvoicesResponse:
+    _require_org_owner(db, org_id, user)
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    if not stripe_configured():
+        return BillingInvoicesResponse(
+            organization_id=org.id,
+            stripe_enabled=False,
+            customer_id=org.stripe_customer_id,
+            invoices=[],
+        )
+    try:
+        invoices = list_invoice_history(org=org, limit=20)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to load invoices: {exc}") from exc
+    return BillingInvoicesResponse(
+        organization_id=org.id,
+        stripe_enabled=True,
+        customer_id=org.stripe_customer_id,
+        invoices=invoices,
     )
 
 
