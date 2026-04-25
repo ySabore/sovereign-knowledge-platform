@@ -370,16 +370,6 @@ class Settings(BaseSettings):
     def connector_catalog(self) -> list[dict[str, Any]]:
         default_catalog: list[dict[str, Any]] = [
             {
-                "id": "google-drive",
-                "name": "Google Drive",
-                "emoji": "📁",
-                "description": (
-                    "Google Docs as text. Optionally limit sync to specific folders "
-                    "(and subfolders) via folder IDs from Drive URLs."
-                ),
-                "backendReady": True,
-            },
-            {
                 "id": "confluence",
                 "name": "Confluence",
                 "emoji": "📘",
@@ -401,10 +391,69 @@ class Settings(BaseSettings):
                 "backendReady": True,
             },
             {
+                "id": "google-drive",
+                "name": "Google Drive",
+                "emoji": "📁",
+                "description": (
+                    "Google Docs as text. Optionally limit sync to specific folders "
+                    "(and subfolders) via folder IDs from Drive URLs."
+                ),
+                "backendReady": True,
+            },
+            {
                 "id": "jira",
                 "name": "Jira",
                 "emoji": "🎫",
                 "description": "Issues and descriptions from Jira Cloud.",
+                "backendReady": True,
+            },
+            {
+                "id": "slack",
+                "name": "Slack",
+                "emoji": "💬",
+                "description": "Messages and knowledge from Slack channels and threads.",
+                "backendReady": True,
+            },
+            {
+                "id": "zendesk",
+                "name": "Zendesk",
+                "emoji": "🎯",
+                "description": "Support tickets and help-center content.",
+                "backendReady": True,
+            },
+            {
+                "id": "sharepoint",
+                "name": "SharePoint",
+                "emoji": "🧩",
+                "description": "SharePoint sites, lists, and document libraries.",
+                "backendReady": True,
+            },
+            {
+                "id": "linear",
+                "name": "Linear",
+                "emoji": "◌",
+                "description": "Issues, cycles, and project documents from Linear.",
+                "backendReady": True,
+            },
+            {
+                "id": "intercom",
+                "name": "Intercom",
+                "emoji": "💗",
+                "description": "Help-center articles and conversation threads.",
+                "backendReady": True,
+            },
+            {
+                "id": "salesforce",
+                "name": "Salesforce",
+                "emoji": "☁️",
+                "description": "Accounts, opportunities, and CRM knowledge records.",
+                "backendReady": True,
+            },
+            {
+                "id": "dropbox",
+                "name": "Dropbox",
+                "emoji": "📦",
+                "description": "Dropbox docs and files for searchable workspace context.",
                 "backendReady": True,
             },
         ]

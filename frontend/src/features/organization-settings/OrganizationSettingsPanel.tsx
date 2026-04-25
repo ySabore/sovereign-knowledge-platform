@@ -19,7 +19,10 @@ type Org = {
   ollama_base_url?: string | null;
   retrieval_strategy?: string | null;
   use_hosted_rerank?: boolean;
+  allowed_connector_ids?: string[] | null;
 };
+type ConnectorCatalogItem = { id: string; name: string; emoji: string; description: string };
+type BillingPlanSummary = { plan: string; connectors_max: number };
 
 type OrgChatProvider = "" | "extractive" | "ollama" | "openai" | "anthropic";
 type OrgRetrievalStrategy = "" | "heuristic" | "hybrid" | "rerank";
@@ -174,6 +177,13 @@ export function OrganizationSettingsPanel({
   );
   const [useHostedRerank, setUseHostedRerank] = useState(Boolean(org.use_hosted_rerank));
   const [cohereRerankAvailable, setCohereRerankAvailable] = useState(false);
+  const [connectorCatalog, setConnectorCatalog] = useState<ConnectorCatalogItem[]>([]);
+  const [allowedConnectorIds, setAllowedConnectorIds] = useState<string[]>(
+    Array.isArray(org.allowed_connector_ids) ? org.allowed_connector_ids : [],
+  );
+  const [connectorMax, setConnectorMax] = useState<number | null>(null);
+  const [connectorPlan, setConnectorPlan] = useState<string | null>(null);
+  const [connectorLimitMsg, setConnectorLimitMsg] = useState<string | null>(null);
   const cohereRerankEffective = useMemo(
     () => cohereRerankAvailable || Boolean(org.cohere_api_key_configured),
     [cohereRerankAvailable, org.cohere_api_key_configured],
@@ -195,19 +205,53 @@ export function OrganizationSettingsPanel({
 
   useEffect(() => {
     let cancelled = false;
-    void fetchPublicConfig()
+    void fetchPublicConfig(true)
       .then((cfg) => {
         if (cancelled) return;
         const f = cfg.features as { cohere_rerank?: boolean } | undefined;
         setCohereRerankAvailable(Boolean(f?.cohere_rerank));
+        const rawCatalog = Array.isArray(cfg.connector_catalog) ? cfg.connector_catalog : [];
+        const normalizedCatalog = rawCatalog
+          .map((item) => ({
+            id: String(item.id || "").trim().toLowerCase(),
+            name: String(item.name || "").trim(),
+            emoji: String(item.emoji || "🔌"),
+            description: String(item.description || ""),
+          }))
+          .filter((item) => item.id.length > 0 && item.name.length > 0);
+        setConnectorCatalog(normalizedCatalog);
       })
       .catch(() => {
-        if (!cancelled) setCohereRerankAvailable(false);
+        if (!cancelled) {
+          setCohereRerankAvailable(false);
+          setConnectorCatalog([]);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .get<BillingPlanSummary>(`/organizations/${org.id}/billing/plan`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setConnectorMax(Number.isFinite(data.connectors_max) ? Number(data.connectors_max) : null);
+        setConnectorPlan(String(data.plan || "").trim().toLowerCase() || null);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setConnectorMax(null);
+        setConnectorPlan(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [org.id]);
 
   useEffect(() => {
     setName(org.name);
@@ -220,6 +264,8 @@ export function OrganizationSettingsPanel({
     setUseHostedRerank(Boolean(org.use_hosted_rerank));
     setOpenaiBaseUrl(org.openai_api_base_url ?? "");
     setAnthropicBaseUrl(org.anthropic_api_base_url ?? "");
+    setAllowedConnectorIds(Array.isArray(org.allowed_connector_ids) ? org.allowed_connector_ids : []);
+    setConnectorLimitMsg(null);
     setOpenaiKeyDraft("");
     setAnthropicKeyDraft("");
     setCohereKeyDraft("");
@@ -242,6 +288,7 @@ export function OrganizationSettingsPanel({
     org.use_hosted_rerank,
     org.openai_api_base_url,
     org.anthropic_api_base_url,
+    org.allowed_connector_ids,
     org.openai_api_key_configured,
     org.anthropic_api_key_configured,
     org.cohere_api_key_configured,
@@ -271,6 +318,8 @@ export function OrganizationSettingsPanel({
     setUseHostedRerank(Boolean(org.use_hosted_rerank));
     setOpenaiBaseUrl(org.openai_api_base_url ?? "");
     setAnthropicBaseUrl(org.anthropic_api_base_url ?? "");
+    setAllowedConnectorIds(Array.isArray(org.allowed_connector_ids) ? org.allowed_connector_ids : []);
+    setConnectorLimitMsg(null);
     setOpenaiKeyDraft("");
     setAnthropicKeyDraft("");
     setCohereKeyDraft("");
@@ -281,11 +330,75 @@ export function OrganizationSettingsPanel({
     setOk(null);
   }
 
+  const hasChanges = useMemo(() => {
+    const sameNormalized = (a: string | null | undefined, b: string | null | undefined) =>
+      (a || "").trim() === (b || "").trim();
+    const selectedNow = [...allowedConnectorIds].sort();
+    const selectedOriginal = [...(Array.isArray(org.allowed_connector_ids) ? org.allowed_connector_ids : [])].sort();
+    const connectorsChanged =
+      selectedNow.length !== selectedOriginal.length ||
+      selectedNow.some((id, idx) => id !== selectedOriginal[idx]);
+
+    return (
+      !sameNormalized(name, org.name) ||
+      !sameNormalized(status.toLowerCase(), org.status) ||
+      !sameNormalized(description, org.description || "") ||
+      !sameNormalized(chatProv, org.preferred_chat_provider || "") ||
+      !sameNormalized(chatModel, org.preferred_chat_model || "") ||
+      !sameNormalized(ollamaBaseUrl, org.ollama_base_url || "") ||
+      !sameNormalized(retrievalStrat, org.retrieval_strategy || "") ||
+      Boolean(useHostedRerank) !== Boolean(org.use_hosted_rerank) ||
+      !sameNormalized(openaiBaseUrl, org.openai_api_base_url || "") ||
+      !sameNormalized(anthropicBaseUrl, org.anthropic_api_base_url || "") ||
+      Boolean(openaiKeyDraft.trim()) ||
+      Boolean(anthropicKeyDraft.trim()) ||
+      Boolean(cohereKeyDraft.trim()) ||
+      clearOpenaiKey ||
+      clearAnthropicKey ||
+      clearCohereKey ||
+      connectorsChanged
+    );
+  }, [
+    allowedConnectorIds,
+    anthropicBaseUrl,
+    anthropicKeyDraft,
+    chatModel,
+    chatProv,
+    clearAnthropicKey,
+    clearCohereKey,
+    clearOpenaiKey,
+    cohereKeyDraft,
+    description,
+    name,
+    ollamaBaseUrl,
+    openaiBaseUrl,
+    openaiKeyDraft,
+    org.allowed_connector_ids,
+    org.anthropic_api_base_url,
+    org.description,
+    org.name,
+    org.ollama_base_url,
+    org.openai_api_base_url,
+    org.preferred_chat_model,
+    org.preferred_chat_provider,
+    org.retrieval_strategy,
+    org.status,
+    org.use_hosted_rerank,
+    retrievalStrat,
+    status,
+    useHostedRerank,
+  ]);
+
   async function save() {
     setSaving(true);
     setErr(null);
     setOk(null);
     try {
+      if (connectorMax !== null && allowedConnectorIds.length > connectorMax) {
+        setErr(`Connector limit reached for ${connectorPlan || "current"} plan (${connectorMax}).`);
+        setSaving(false);
+        return;
+      }
       const patch: Record<string, unknown> = {
         name: name.trim(),
         status: status.trim().toLowerCase(),
@@ -295,6 +408,7 @@ export function OrganizationSettingsPanel({
         ollama_base_url: ollamaBaseUrl.trim() || null,
         retrieval_strategy: retrievalStrat === "" ? null : retrievalStrat,
         use_hosted_rerank: useHostedRerank,
+        allowed_connector_ids: allowedConnectorIds.length > 0 ? allowedConnectorIds : null,
       };
       if (canManageCloudCredentials) {
         if (clearOpenaiKey) patch.openai_api_key = null;
@@ -388,6 +502,119 @@ export function OrganizationSettingsPanel({
               lineHeight: 1.6,
             }}
           />
+        </div>
+      </OrgSettingsCollapsible>
+
+      <OrgSettingsCollapsible
+        title="Connector access"
+        subtitle="Choose which platform connectors this organization can add to workspaces"
+        defaultOpen={false}
+      >
+        {connectorMax !== null && (
+          <div style={{ fontSize: 11, color: C.t2 }}>
+            Plan limit: up to <strong style={{ color: C.t1 }}>{connectorMax}</strong> enabled connector
+            {connectorMax === 1 ? "" : "s"}
+            {connectorPlan ? <> on <strong style={{ color: C.t1 }}>{connectorPlan}</strong></> : null}.
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: C.t2 }}>
+          Selected:{" "}
+          <strong style={{ color: C.t1 }}>
+            {allowedConnectorIds.length}/{connectorMax ?? connectorCatalog.length}
+          </strong>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.t2 }}>
+            <input
+              type="checkbox"
+              checked={allowedConnectorIds.length === 0}
+              disabled={connectorMax !== null && connectorCatalog.length > connectorMax}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  if (connectorMax !== null && connectorCatalog.length > connectorMax) {
+                    setConnectorLimitMsg(
+                      `Your plan allows up to ${connectorMax} connectors. Select up to ${connectorMax} from the list.`,
+                    );
+                    return;
+                  }
+                  setAllowedConnectorIds([]);
+                  setConnectorLimitMsg(null);
+                }
+              }}
+            />
+            Allow all platform connectors
+          </label>
+          <div style={{ fontSize: 10, color: C.t3 }}>
+            When this is off, org/workspace admins only see the selected connectors in the Add Connector modal.
+          </div>
+          {connectorLimitMsg ? (
+            <div
+              style={{
+                border: "1px solid rgba(239,68,68,0.35)",
+                background: "rgba(239,68,68,0.08)",
+                color: "#fca5a5",
+                borderRadius: 8,
+                padding: "8px 10px",
+                fontSize: 11,
+                lineHeight: 1.45,
+              }}
+            >
+              {connectorLimitMsg}
+            </div>
+          ) : null}
+          {connectorCatalog.length === 0 ? (
+            <div style={{ fontSize: 11, color: C.t3 }}>Connector catalog is unavailable right now.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
+              {connectorCatalog.map((item) => {
+                const checked = allowedConnectorIds.includes(item.id);
+                return (
+                  <label
+                    key={item.id}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "flex-start",
+                      border: `1px solid ${C.bd}`,
+                      background: C.bgE,
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        setAllowedConnectorIds((prev) => {
+                          if (e.target.checked) {
+                            if (connectorMax !== null && prev.length >= connectorMax) {
+                              setConnectorLimitMsg(
+                                `Plan limit reached (${connectorMax}). Upgrade plan or uncheck another connector.`,
+                              );
+                              return prev;
+                            }
+                            setConnectorLimitMsg(null);
+                            return [...prev, item.id];
+                          }
+                          setConnectorLimitMsg(null);
+                          return prev.filter((id) => id !== item.id);
+                        });
+                      }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>
+                        {item.emoji} {item.name}
+                      </span>
+                      <span style={{ display: "block", fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.35 }}>
+                        {item.description}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
       </OrgSettingsCollapsible>
 
@@ -685,7 +912,7 @@ export function OrganizationSettingsPanel({
           <Btn variant="ghost" disabled={saving} onClick={resetForm}>
             Reset
           </Btn>
-          <Btn variant="primary" disabled={saving || !name.trim()} onClick={save}>
+          <Btn variant="primary" disabled={saving || !name.trim() || !hasChanges} onClick={save}>
             {saving ? "Saving…" : "Save changes"}
           </Btn>
         </div>

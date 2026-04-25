@@ -133,6 +133,14 @@ class Organization(Base):
         nullable=True,
         doc="heuristic | hybrid | rerank — rerank uses vector retrieval + Cohere when org or platform API key is set.",
     )
+    allowed_connector_ids: Mapped[list[str] | None] = mapped_column(
+        JSON,
+        nullable=True,
+        doc=(
+            "Optional connector id allowlist for this org. "
+            "Null/empty means all platform catalog connectors are available."
+        ),
+    )
     use_hosted_rerank: Mapped[bool] = mapped_column(
         Boolean,
         default=False,

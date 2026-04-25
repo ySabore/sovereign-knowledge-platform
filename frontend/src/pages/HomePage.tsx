@@ -48,6 +48,7 @@ import { HomeTopBar } from "../features/home-shell/HomeTopBar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrgRetrievalStrategy = "" | "heuristic" | "hybrid" | "rerank";
+type BillingPlanSummary = { plan: string; connectors_max: number };
 
 const URL_PANELS: Panel[] = [
   "platform",
@@ -303,24 +304,31 @@ function OrgDetailView({
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [documentCount, setDocumentCount] = useState<number | null>(null);
+  const [connectorMax, setConnectorMax] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setOverviewLoading(true);
     setMemberCount(null);
     setDocumentCount(null);
-    void api
-      .get<{ member_count: number; document_count: number }>(`/organizations/${org.id}/overview-stats`)
-      .then(({ data }) => {
+    void Promise.all([
+      api.get<{ member_count: number; document_count: number }>(`/organizations/${org.id}/overview-stats`),
+      api.get<BillingPlanSummary>(`/organizations/${org.id}/billing/plan`),
+    ])
+      .then(([overviewResp, planResp]) => {
         if (!cancelled) {
-          setMemberCount(data.member_count);
-          setDocumentCount(data.document_count);
+          setMemberCount(overviewResp.data.member_count);
+          setDocumentCount(overviewResp.data.document_count);
+          setConnectorMax(
+            Number.isFinite(planResp.data.connectors_max) ? Number(planResp.data.connectors_max) : null,
+          );
         }
       })
       .catch(() => {
         if (!cancelled) {
           setMemberCount(null);
           setDocumentCount(null);
+          setConnectorMax(null);
         }
       })
       .finally(() => {
@@ -330,6 +338,16 @@ function OrgDetailView({
       cancelled = true;
     };
   }, [org.id]);
+
+  const selectedConnectorCount = Array.isArray(org.allowed_connector_ids)
+    ? org.allowed_connector_ids.length
+    : CONNECTORS.length;
+  const connectorCardValue = connectorMax !== null
+    ? `${selectedConnectorCount}/${connectorMax}`
+    : `${selectedConnectorCount}`;
+  const connectorCardSub = connectorMax !== null
+    ? "Selected / plan limit"
+    : "Selected connectors";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
@@ -418,8 +436,8 @@ function OrgDetailView({
           <StatTile
             icon="🔌"
             label="Connectors"
-            value={CONNECTORS.length}
-            sub="Available integrations"
+            value={connectorCardValue}
+            sub={connectorCardSub}
             color={C.green}
             onClick={onNavigateToConnectors}
             title="Open Connectors in the left menu"

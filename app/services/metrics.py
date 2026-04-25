@@ -158,6 +158,26 @@ def list_connectors_for_org(db: Session, organization_id: UUID) -> list[dict[str
         .order_by(IntegrationConnector.connector_type.asc())
         .all()
     )
+    connector_workspace_counts_rows = (
+        db.query(
+            Document.integration_connector_id.label("connector_id"),
+            Document.workspace_id.label("workspace_id"),
+            func.count(Document.id).label("doc_count"),
+        )
+        .filter(
+            Document.organization_id == organization_id,
+            Document.integration_connector_id.isnot(None),
+            Document.status == DocumentStatus.indexed.value,
+        )
+        .group_by(Document.integration_connector_id, Document.workspace_id)
+        .all()
+    )
+    doc_counts_by_connector_workspace: dict[str, dict[str, int]] = {}
+    for row in connector_workspace_counts_rows:
+        conn_id = str(row.connector_id)
+        ws_id = str(row.workspace_id)
+        doc_counts_by_connector_workspace.setdefault(conn_id, {})[ws_id] = int(row.doc_count or 0)
+
     out = []
     for r in rows:
         nid = r.nango_connection_id or ""
@@ -182,6 +202,7 @@ def list_connectors_for_org(db: Session, organization_id: UUID) -> list[dict[str
             "nango_connection_id": nid[:12] + "…" if len(nid) > 12 else nid,
             "workspace_id": workspace_id,
             "workspace_ids": workspace_ids,
+            "document_count_by_workspace": doc_counts_by_connector_workspace.get(str(r.id), {}),
         }
         if r.connector_type == "google-drive":
             drive_sync_by_workspace: dict[str, dict[str, Any]] = {}

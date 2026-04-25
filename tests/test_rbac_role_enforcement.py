@@ -346,6 +346,38 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
 
+    def test_org_owner_can_set_allowed_connector_ids(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["google-drive"]},
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body.get("allowed_connector_ids"), ["google-drive"])
+
+    def test_activate_connector_rejects_disallowed_org_connector(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        set_policy = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["google-drive"]},
+            headers=headers,
+        )
+        self.assertEqual(set_policy.status_code, 200, set_policy.text)
+        resp = self.client.post(
+            "/connectors/activate",
+            json={
+                "integration_id": "notion",
+                "connection_id": "conn-test-notion",
+                "organization_id": str(self.org_id),
+                "workspace_id": str(self.workspace_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("not enabled for the organization", resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()

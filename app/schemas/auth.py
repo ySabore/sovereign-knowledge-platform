@@ -81,6 +81,10 @@ class OrganizationUpdate(BaseModel):
         default=None,
         description="With heuristic/hybrid, use Cohere Rerank when org or platform API key is configured",
     )
+    allowed_connector_ids: list[str] | None = Field(
+        default=None,
+        description="Optional connector id allowlist for this org; null/empty means all platform catalog connectors.",
+    )
 
 
 class OrganizationPublic(BaseModel):
@@ -100,6 +104,7 @@ class OrganizationPublic(BaseModel):
     ollama_base_url: str | None = None
     retrieval_strategy: str | None = None
     use_hosted_rerank: bool = False
+    allowed_connector_ids: list[str] | None = None
 
     model_config = {"from_attributes": True}
 

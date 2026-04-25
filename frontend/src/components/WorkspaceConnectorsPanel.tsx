@@ -65,6 +65,7 @@ type Row = {
   docCount: number;
   driveSync?: DriveSync | null;
 };
+type OrganizationConnectorPolicy = { allowed_connector_ids?: string[] | null };
 
 function mapUiStatus(apiStatus: string): Row["status"] {
   const s = apiStatus.toLowerCase();
@@ -108,6 +109,8 @@ export function WorkspaceConnectorsPanel({
   const [modalQuery, setModalQuery] = useState("");
   const [modalFilter, setModalFilter] = useState<ConnectorViewFilter>("all");
   const [modalError, setModalError] = useState<string | null>(null);
+  const [allowedConnectorIds, setAllowedConnectorIds] = useState<Set<string> | null>(null);
+  const [googleDriveScopeOpen, setGoogleDriveScopeOpen] = useState(false);
 
   const googleDriveRow = useMemo(() => rows.find((r) => r.catalog.id === "google-drive"), [rows]);
 
@@ -120,13 +123,14 @@ export function WorkspaceConnectorsPanel({
     const r = rows.find((x) => x.catalog.id === "google-drive" && x.backendId);
     setDriveFolderText((r?.driveSync?.folder_ids ?? []).join("\n"));
     setDriveIncludeSubfolders(r?.driveSync?.include_subfolders !== false);
+    setGoogleDriveScopeOpen(false);
     // Only re-apply from server when saved config changes (not on unrelated row refreshes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driveSyncKey]);
 
   const refresh = useCallback(async () => {
     if (!organizationId) return;
-    const [connectorsResp, workspacesResp] = await Promise.all([
+    const [connectorsResp, workspacesResp, orgResp] = await Promise.all([
       api.get<
         {
           id: string;
@@ -136,16 +140,24 @@ export function WorkspaceConnectorsPanel({
           document_count: number;
           workspace_id?: string | null;
           workspace_ids?: string[] | null;
+          document_count_by_workspace?: Record<string, number> | null;
           drive_sync?: DriveSync | null;
           drive_sync_by_workspace?: Record<string, DriveSync> | null;
         }[]
       >(`/connectors/organization/${organizationId}`),
       api.get<{ id: string; name: string }[]>(`/workspaces/org/${organizationId}`),
+      api.get<OrganizationConnectorPolicy>(`/organizations/${organizationId}`),
     ]);
     const data = connectorsResp.data;
     const wsMap: Record<string, string> = {};
     for (const ws of workspacesResp.data) wsMap[ws.id] = ws.name;
     setWorkspaceNamesById(wsMap);
+    const allowed = Array.isArray(orgResp.data?.allowed_connector_ids)
+      ? orgResp.data.allowed_connector_ids
+          .map((id) => String(id || "").trim().toLowerCase())
+          .filter((id) => id.length > 0)
+      : [];
+    setAllowedConnectorIds(allowed.length > 0 ? new Set(allowed) : null);
     setRows(
       catalog.map((c) => {
         const hit = data.find((d) => connectorCatalogMatch(c.id, d.connector_type));
@@ -162,18 +174,29 @@ export function WorkspaceConnectorsPanel({
           workspaceIds,
           status: hit && assigned ? mapUiStatus(hit.status) : "none",
           lastSync: hit?.last_synced_at ?? null,
-          docCount: hit?.document_count ?? 0,
+          docCount:
+            hit?.document_count_by_workspace && workspaceId in hit.document_count_by_workspace
+              ? Number(hit.document_count_by_workspace[workspaceId] ?? 0)
+              : 0,
           driveSync:
             (hit?.drive_sync_by_workspace && workspaceId in hit.drive_sync_by_workspace
               ? hit.drive_sync_by_workspace[workspaceId]
-              : hit?.drive_sync) ?? null,
+              : null) ?? null,
         };
       }),
     );
   }, [organizationId, workspaceId, catalog]);
 
+  const scopedRows = useMemo(
+    () =>
+      rows.filter((r) =>
+        allowedConnectorIds === null ? true : allowedConnectorIds.has(r.catalog.id.trim().toLowerCase()),
+      ),
+    [rows, allowedConnectorIds],
+  );
+
   useEffect(() => {
-    void fetchPublicConfig()
+    void fetchPublicConfig(true)
       .then((cfg) => {
         if (Array.isArray(cfg.connector_catalog) && cfg.connector_catalog.length > 0) {
           const normalized = cfg.connector_catalog
@@ -203,30 +226,32 @@ export function WorkspaceConnectorsPanel({
     void refresh().catch(() => {});
   }, [organizationId, refresh]);
 
-  const activeCount = useMemo(() => rows.filter((r) => r.backendId).length, [rows]);
-  const connectedInWorkspaceCount = useMemo(() => rows.filter((r) => r.assigned).length, [rows]);
-  const totalDocs = useMemo(() => rows.reduce((s, r) => s + r.docCount, 0), [rows]);
+  const activeCount = useMemo(() => scopedRows.filter((r) => r.backendId).length, [scopedRows]);
+  const connectedInWorkspaceCount = useMemo(() => scopedRows.filter((r) => r.assigned).length, [scopedRows]);
+  const totalDocs = useMemo(
+    () => scopedRows.filter((r) => r.assigned).reduce((s, r) => s + r.docCount, 0),
+    [scopedRows],
+  );
   const availableCount = useMemo(
-    () => rows.filter((r) => r.catalog.backendReady && !r.assigned).length,
-    [rows],
+    () => scopedRows.filter((r) => r.catalog.backendReady && !r.assigned).length,
+    [scopedRows],
   );
   const comingSoonCount = useMemo(
-    () => rows.filter((r) => !r.catalog.backendReady && !r.backendId).length,
-    [rows],
+    () => scopedRows.filter((r) => !r.catalog.backendReady && !r.backendId).length,
+    [scopedRows],
   );
   const addableRows = useMemo(
-    () => rows.filter((r) => r.catalog.backendReady && !r.assigned),
-    [rows],
+    () => scopedRows.filter((r) => r.catalog.backendReady && !r.assigned),
+    [scopedRows],
   );
   const visibleRows = useMemo(() => {
-    if (viewFilter === "available") return rows.filter((r) => r.catalog.backendReady && !r.assigned);
-    if (viewFilter === "connected") return rows.filter((r) => r.assigned);
-    if (viewFilter === "coming-soon") return rows.filter((r) => !r.catalog.backendReady && !r.backendId);
-    return rows;
-  }, [rows, viewFilter]);
+    // Workspace grid only shows connectors already added to this workspace.
+    // Use "Add connector" modal to browse/select available org-enabled options.
+    return scopedRows.filter((r) => r.assigned);
+  }, [scopedRows]);
   const modalRows = useMemo(() => {
     const q = modalQuery.trim().toLowerCase();
-    const inScope = rows.filter((r) => {
+    const inScope = scopedRows.filter((r) => {
       if (modalFilter === "available") return r.catalog.backendReady && !r.assigned;
       if (modalFilter === "connected") return r.assigned;
       if (modalFilter === "coming-soon") return !r.catalog.backendReady && !r.backendId;
@@ -240,7 +265,7 @@ export function WorkspaceConnectorsPanel({
         r.catalog.description.toLowerCase().includes(q)
       );
     });
-  }, [rows, modalFilter, modalQuery]);
+  }, [scopedRows, modalFilter, modalQuery]);
 
   async function connect(row: Row): Promise<{ ok: boolean; error?: string }> {
     const catalogId = row.catalog.id;
@@ -299,6 +324,11 @@ export function WorkspaceConnectorsPanel({
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean);
+    if (ids.length === 0) {
+      setBusy(null);
+      setMsg("Add at least one Google Drive folder ID before saving scope.");
+      return;
+    }
     try {
       await api.patch(`/connectors/${backendId}/config`, {
         workspace_id: workspaceId,
@@ -306,6 +336,7 @@ export function WorkspaceConnectorsPanel({
         drive_include_subfolders: driveIncludeSubfolders,
       });
       setMsg("Google Drive folder scope saved. Run sync to pull documents.");
+      setGoogleDriveScopeOpen(false);
       await refresh();
     } catch (e) {
       setMsg(apiErrorMessage(e));
@@ -376,8 +407,8 @@ export function WorkspaceConnectorsPanel({
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {[
-          { id: "all", label: "All", count: rows.length },
-          { id: "available", label: "Available", count: availableCount },
+          { id: "all", label: "Added", count: connectedInWorkspaceCount },
+          { id: "available", label: "Available (popup)", count: availableCount },
           { id: "connected", label: "Connected", count: connectedInWorkspaceCount },
           { id: "coming-soon", label: "Coming soon", count: comingSoonCount },
         ].map((item) => {
@@ -469,6 +500,11 @@ export function WorkspaceConnectorsPanel({
             ? assignedWorkspaceNames.join(", ")
             : "Not assigned to any workspace";
           const isComingSoon = !r.catalog.backendReady && !r.backendId;
+          const googleDriveScopeRequired =
+            r.catalog.id === "google-drive" &&
+            r.backendId &&
+            r.assigned &&
+            (r.driveSync?.folder_ids?.length ?? 0) === 0;
           return (
             <div
               key={r.catalog.id}
@@ -605,8 +641,9 @@ export function WorkspaceConnectorsPanel({
                       cursor: busy ? "wait" : "pointer",
                       fontFamily: C.sans,
                     }}
-                    disabled={busy === r.catalog.id || r.status === "syncing"}
+                    disabled={busy === r.catalog.id || r.status === "syncing" || Boolean(googleDriveScopeRequired)}
                     onClick={() => void syncNow(r.catalog.id, r.backendId)}
+                    title={googleDriveScopeRequired ? "Set Google Drive folder scope first." : undefined}
                   >
                     {busy === r.catalog.id ? "…" : "Sync now"}
                   </button>
@@ -647,57 +684,86 @@ export function WorkspaceConnectorsPanel({
                   gap: 8,
                 }}
               >
-                <div style={{ fontSize: 10, fontWeight: 600, color: C.t2 }}>Sync scope</div>
-                <div style={{ fontSize: 10, color: C.t3, lineHeight: 1.35 }}>
-                  Paste one folder ID per line (from a Drive folder URL). Leave empty to sync all Google Docs the
-                  account can list. Subfolders are included when enabled.
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: C.t2 }}>
+                    Sync scope{" "}
+                    {(r.driveSync?.folder_ids?.length ?? 0) > 0 ? (
+                      <span style={{ color: C.green }}>configured</span>
+                    ) : (
+                      <span style={{ color: "#f59e0b" }}>required before sync</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setGoogleDriveScopeOpen((v) => !v)}
+                    style={{
+                      border: `1px solid ${C.bd}`,
+                      background: C.bgE,
+                      color: C.t2,
+                      borderRadius: 8,
+                      padding: "4px 8px",
+                      cursor: "pointer",
+                      fontSize: 10,
+                      fontFamily: C.sans,
+                    }}
+                  >
+                    {googleDriveScopeOpen ? "Collapse" : "Expand"}
+                  </button>
                 </div>
-                <textarea
-                  value={driveFolderText}
-                  onChange={(e) => setDriveFolderText(e.target.value)}
-                  rows={4}
-                  spellCheck={false}
-                  placeholder={"e.g. 1a2b3c4d5e6f7g8h9i0j\n(second root folder id)"}
-                  style={{
-                    width: "100%",
-                    resize: "vertical",
-                    boxSizing: "border-box",
-                    fontSize: 10,
-                    fontFamily: C.mono,
-                    color: C.t1,
-                    background: C.bgE,
-                    border: `1px solid ${C.bd}`,
-                    borderRadius: 8,
-                    padding: 8,
-                  }}
-                />
-                <label style={{ fontSize: 10, color: C.t2, display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={driveIncludeSubfolders}
-                    onChange={(e) => setDriveIncludeSubfolders(e.target.checked)}
-                  />
-                  Include subfolders
-                </label>
-                <button
-                  type="button"
-                  style={{
-                    alignSelf: "flex-start",
-                    padding: "6px 12px",
-                    borderRadius: 8,
-                    border: `1px solid ${C.bd}`,
-                    background: C.bgE,
-                    color: C.t1,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    cursor: busy ? "wait" : "pointer",
-                    fontFamily: C.sans,
-                  }}
-                  disabled={busy === "google-drive"}
-                  onClick={() => void saveDriveFolderScope(r.backendId as string)}
-                >
-                  {busy === "google-drive" ? "…" : "Save folder scope"}
-                </button>
+                {googleDriveScopeOpen && (
+                  <>
+                    <div style={{ fontSize: 10, color: C.t3, lineHeight: 1.35 }}>
+                      Paste one folder ID per line (from a Drive folder URL). Folder scope is required before syncing
+                      this workspace.
+                    </div>
+                    <textarea
+                      value={driveFolderText}
+                      onChange={(e) => setDriveFolderText(e.target.value)}
+                      rows={4}
+                      spellCheck={false}
+                      placeholder={"e.g. 1a2b3c4d5e6f7g8h9i0j\n(second root folder id)"}
+                      style={{
+                        width: "100%",
+                        resize: "vertical",
+                        boxSizing: "border-box",
+                        fontSize: 10,
+                        fontFamily: C.mono,
+                        color: C.t1,
+                        background: C.bgE,
+                        border: `1px solid ${C.bd}`,
+                        borderRadius: 8,
+                        padding: 8,
+                      }}
+                    />
+                    <label style={{ fontSize: 10, color: C.t2, display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={driveIncludeSubfolders}
+                        onChange={(e) => setDriveIncludeSubfolders(e.target.checked)}
+                      />
+                      Include subfolders
+                    </label>
+                    <button
+                      type="button"
+                      style={{
+                        alignSelf: "flex-start",
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        border: `1px solid ${C.bd}`,
+                        background: C.bgE,
+                        color: C.t1,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: busy ? "wait" : "pointer",
+                        fontFamily: C.sans,
+                      }}
+                      disabled={busy === "google-drive"}
+                      onClick={() => void saveDriveFolderScope(r.backendId as string)}
+                    >
+                      {busy === "google-drive" ? "…" : "Save folder scope"}
+                    </button>
+                  </>
+                )}
               </div>
             )}
             </div>
@@ -706,7 +772,7 @@ export function WorkspaceConnectorsPanel({
       </div>
       {visibleRows.length === 0 && (
         <div style={{ fontSize: 11, color: C.t3 }}>
-          No connectors match this filter in the current workspace context.
+          No connectors added to this workspace yet. Use <strong style={{ color: C.t2 }}>Add connector</strong> to attach one.
         </div>
       )}
       {showAddConnectorModal && (
@@ -737,7 +803,7 @@ export function WorkspaceConnectorsPanel({
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: C.t1, marginBottom: 3 }}>Add connector</div>
                 <div style={{ fontSize: 11, color: C.t3 }}>
-                  Browse the full connector catalog for workspace <span style={{ color: C.t1 }}>{wsName}</span>.
+                  Browse connectors enabled for this organization and add one to <span style={{ color: C.t1 }}>{wsName}</span>.
                 </div>
               </div>
               <button
@@ -788,7 +854,7 @@ export function WorkspaceConnectorsPanel({
               />
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {[
-                  { id: "all", label: "All", count: rows.length },
+                  { id: "all", label: "All", count: scopedRows.length },
                   { id: "available", label: "Available", count: availableCount },
                   { id: "connected", label: "Added", count: connectedInWorkspaceCount },
                   { id: "coming-soon", label: "Coming soon", count: comingSoonCount },
@@ -932,9 +998,7 @@ export function WorkspaceConnectorsPanel({
                               ? "Coming soon"
                               : busy === r.catalog.id
                                 ? "…"
-                                : r.backendId
-                                  ? "Add to workspace"
-                                  : "Add connector"}
+                                : "Add to workspace"}
                         </button>
                       </div>
                     </div>
@@ -949,7 +1013,11 @@ export function WorkspaceConnectorsPanel({
         {activeCount > 0
           ? `${activeCount} connector integration${activeCount === 1 ? "" : "s"} available in this organization.`
           : "No connector integrations configured yet for this organization."}{" "}
-        {catalog.length > 0 ? `Catalog: ${catalog.length} available.` : ""}
+        {catalog.length > 0
+          ? allowedConnectorIds === null
+            ? `Catalog: ${catalog.length} available.`
+            : `Catalog: ${allowedConnectorIds.size} enabled for this organization.`
+          : ""}
       </div>
       <style>{`
         @media (max-width: 1100px) {

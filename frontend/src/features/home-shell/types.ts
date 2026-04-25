@@ -14,6 +14,7 @@ export type Org = {
   ollama_base_url?: string | null;
   retrieval_strategy?: string | null;
   use_hosted_rerank?: boolean;
+  allowed_connector_ids?: string[] | null;
 };
 
 export type Workspace = {

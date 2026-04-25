@@ -190,6 +190,28 @@ def _workspace_drive_sync(cfg: dict[str, Any] | None, workspace_id: UUID | None)
     }
 
 
+def _allowed_connector_ids_for_org(db: Session, org_id: UUID) -> set[str] | None:
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    raw = org.allowed_connector_ids if isinstance(org.allowed_connector_ids, list) else None
+    if not raw:
+        return None
+    return {str(item).strip().lower() for item in raw if str(item).strip()}
+
+
+def _require_connector_enabled_for_org(db: Session, org_id: UUID, connector_type: str) -> None:
+    allowed = _allowed_connector_ids_for_org(db, org_id)
+    if allowed is None:
+        return
+    if connector_type.strip().lower() in allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This connector is not enabled for the organization.",
+    )
+
+
 def _update_workspace_drive_sync(
     cfg: dict[str, Any],
     *,
@@ -208,6 +230,33 @@ def _update_workspace_drive_sync(
         cfg["workspace_settings"] = ws_map
     else:
         cfg.pop("workspace_settings", None)
+
+
+def _initialize_workspace_drive_sync(cfg: dict[str, Any], *, workspace_id: UUID) -> None:
+    ws_map = _workspace_settings_map(cfg)
+    ws_map[str(workspace_id)] = {
+        "drive_folder_ids": [],
+        "drive_include_subfolders": True,
+    }
+    cfg["workspace_settings"] = ws_map
+
+
+def _require_google_drive_workspace_scope(conn: IntegrationConnector, workspace_id: UUID) -> None:
+    cfg = conn.config if isinstance(conn.config, dict) else {}
+    ws_map = _workspace_settings_map(cfg)
+    ws_cfg = ws_map.get(str(workspace_id))
+    if not isinstance(ws_cfg, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive folder scope is required before syncing this workspace.",
+        )
+    folder_ids = sanitize_drive_folder_ids(ws_cfg.get("drive_folder_ids"))
+    if folder_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Google Drive folder scope is required before syncing this workspace.",
+    )
 
 
 @router.get("/organization/{organization_id}")
@@ -232,6 +281,7 @@ def create_connector_connect_session(
     """Issue short-lived Nango Connect session token for browser auth popup."""
     integration_norm = normalize_connector_type_for_storage(body.integration_id)
     _require_connector_manage_access(db, body.organization_id, user)
+    _require_connector_enabled_for_org(db, body.organization_id, integration_norm)
     if not nango_configured():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -340,6 +390,7 @@ def activate_connector(
     if body.organization_id:
         integration_norm = normalize_connector_type_for_storage(body.integration_id)
         _require_connector_manage_access(db, body.organization_id, user)
+        _require_connector_enabled_for_org(db, body.organization_id, integration_norm)
         target_workspace_id: UUID | None = None
         if body.workspace_id:
             _require_workspace_connector_manage_access(db, body.organization_id, body.workspace_id, user)
@@ -360,6 +411,8 @@ def activate_connector(
                         drive_include_subfolders=body.drive_include_subfolders,
                     )
                 else:
+                    if target_workspace_id:
+                        _initialize_workspace_drive_sync(cfg, workspace_id=target_workspace_id)
                     if body.drive_folder_ids is not None:
                         cfg["drive_folder_ids"] = sanitize_drive_folder_ids(body.drive_folder_ids)
                     if body.drive_include_subfolders is not None:
@@ -388,6 +441,8 @@ def activate_connector(
                         scoped_ids.append(target_workspace_id)
                     merged["workspace_ids"] = [str(wid) for wid in scoped_ids]
                     merged["workspace_id"] = str(target_workspace_id)
+                    if integration_norm == "google-drive":
+                        _initialize_workspace_drive_sync(merged, workspace_id=target_workspace_id)
                 existing.config = merged or None
                 persisted = existing
             else:
@@ -440,6 +495,10 @@ def assign_connector_to_workspace(
     if workspace_id not in scoped_ids:
         scoped_ids.append(workspace_id)
     _set_connector_workspace_scope(conn, scoped_ids, preferred_workspace_id=workspace_id)
+    if conn.connector_type == "google-drive":
+        merged_cfg = dict(conn.config or {})
+        _initialize_workspace_drive_sync(merged_cfg, workspace_id=workspace_id)
+        conn.config = merged_cfg
     db.commit()
     db.refresh(conn)
     return {
@@ -611,6 +670,8 @@ def sync_connector_now(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Connector is not enabled for this workspace",
             )
+        if conn.connector_type == "google-drive":
+            _require_google_drive_workspace_scope(conn, workspace_id)
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)

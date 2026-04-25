@@ -28,7 +28,7 @@ from app.models import (
     WorkspaceMemberRole,
 )
 from app.services.audit_actor import infer_actor_role
-from app.services.billing import ensure_seat_available
+from app.services.billing import ensure_seat_available, get_plan_entitlements
 from app.services.metrics import list_audit_events_for_org, list_documents_for_org
 from app.services.field_encryption import encrypt_org_secret
 from app.services.invite_email import send_organization_invite_email
@@ -60,6 +60,34 @@ DEFAULT_WORKSPACE_NAME = "General"
 DEFAULT_WORKSPACE_DESCRIPTION = "Default workspace created with the organization."
 INVITE_TTL_DAYS = 7
 logger = logging.getLogger(__name__)
+
+
+def _normalize_allowed_connector_ids(raw: object) -> list[str] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="allowed_connector_ids must be an array of connector ids or null.",
+        )
+    valid_catalog_ids = {
+        str(item.get("id")).strip().lower()
+        for item in settings.connector_catalog()
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    normalized: list[str] = []
+    for item in raw:
+        connector_id = str(item or "").strip().lower()
+        if not connector_id:
+            continue
+        if connector_id not in valid_catalog_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown connector id '{connector_id}'.",
+            )
+        if connector_id not in normalized:
+            normalized.append(connector_id)
+    return normalized or None
 
 
 def _get_org_membership(db: Session, org_id: UUID, user_id: UUID) -> OrganizationMembership | None:
@@ -902,6 +930,27 @@ def update_organization(
     if "use_hosted_rerank" in patch:
         raw_ur = patch["use_hosted_rerank"]
         org.use_hosted_rerank = bool(raw_ur) if raw_ur is not None else False
+    if "allowed_connector_ids" in patch:
+        normalized_allowed = _normalize_allowed_connector_ids(patch["allowed_connector_ids"])
+        connectors_max = int(get_plan_entitlements(org.plan).connectors)
+        catalog_size = len(settings.connector_catalog())
+        if normalized_allowed is None and catalog_size > connectors_max:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Plan connector limit is {connectors_max}. "
+                    "Select up to that many connectors for this organization."
+                ),
+            )
+        if normalized_allowed is not None and len(normalized_allowed) > connectors_max:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Plan connector limit is {connectors_max}. "
+                    f"You selected {len(normalized_allowed)}."
+                ),
+            )
+        org.allowed_connector_ids = normalized_allowed
 
     _write_audit_log(
         db,
@@ -915,6 +964,7 @@ def update_organization(
             "status": org.status,
             "has_description": org.description is not None,
             "preferred_chat_provider": org.preferred_chat_provider,
+            "allowed_connector_count": len(org.allowed_connector_ids or []),
         },
     )
     db.commit()
