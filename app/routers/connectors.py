@@ -16,6 +16,7 @@ from app.deps import get_current_user
 from app.limiter import limiter
 from app.models import (
     AuditAction,
+    ConnectorSyncJob,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -36,7 +37,7 @@ from app.services.nango_client import (
 from app.services.metrics import list_connectors_for_org
 from app.services.permissions import sync_permissions
 from app.services.rate_limits import enforce_connector_sync_limit
-from app.services.sync_orchestrator import run_connector_sync
+from app.services.sync_orchestrator import enqueue_connector_sync_job
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -658,7 +659,7 @@ def sync_connector_now(
     full_sync: bool = False,
     workspace_id: UUID | None = None,
 ) -> dict:
-    """Run a sync: Nango fetch → ingest into default workspace (see connector `config.workspace_id`)."""
+    """Enqueue a sync job; worker/background task executes fetch + ingest."""
     conn = db.get(IntegrationConnector, connector_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
@@ -675,7 +676,53 @@ def sync_connector_now(
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
-    return run_connector_sync(db, connector_id, full_sync=full_sync, workspace_id_override=workspace_id)
+    job, created = enqueue_connector_sync_job(
+        db,
+        connector_id=connector_id,
+        organization_id=conn.organization_id,
+        workspace_id=workspace_id,
+        requested_by_user_id=user.id,
+        full_sync=full_sync,
+    )
+    return {
+        "status": "accepted",
+        "detail": "Sync job queued",
+        "job_id": str(job.id),
+        "job_status": job.status,
+        "connector_id": str(connector_id),
+        "workspace_id": str(workspace_id) if workspace_id is not None else None,
+        "created": created,
+    }
+
+
+@router.get("/sync-jobs/{job_id}")
+@limiter.exempt
+def get_connector_sync_job(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Read connector sync job status and latest result metadata."""
+    job = db.get(ConnectorSyncJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
+    _require_connector_view_access(db, job.organization_id, user)
+    return {
+        "id": str(job.id),
+        "connector_id": str(job.connector_id),
+        "organization_id": str(job.organization_id),
+        "workspace_id": str(job.workspace_id) if job.workspace_id is not None else None,
+        "requested_by_user_id": str(job.requested_by_user_id) if job.requested_by_user_id is not None else None,
+        "status": job.status,
+        "full_sync": bool(job.full_sync),
+        "documents_ingested": int(job.documents_ingested or 0),
+        "attempt_count": int(job.attempt_count or 0),
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
 
 
 @router.post("/sync-permissions")

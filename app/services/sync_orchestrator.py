@@ -13,11 +13,15 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models import IntegrationConnector, Organization, Workspace, utcnow
+from app.models import ConnectorSyncJob, IntegrationConnector, Organization, Workspace, utcnow
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured
 
 logger = logging.getLogger(__name__)
+SYNC_JOB_QUEUED = "queued"
+SYNC_JOB_RUNNING = "running"
+SYNC_JOB_COMPLETED = "completed"
+SYNC_JOB_FAILED = "failed"
 
 
 @dataclass(slots=True)
@@ -193,6 +197,119 @@ def enqueue_connector_sync(request: ConnectorSyncRequest) -> dict[str, Any]:
         "connector_id": request.connector_id,
         "organization_id": str(request.organization_id),
     }
+
+
+def get_active_sync_job(
+    db: Session,
+    *,
+    connector_id: UUID,
+    workspace_id: UUID | None,
+) -> ConnectorSyncJob | None:
+    q = db.query(ConnectorSyncJob).filter(
+        ConnectorSyncJob.connector_id == connector_id,
+        ConnectorSyncJob.status.in_([SYNC_JOB_QUEUED, SYNC_JOB_RUNNING]),
+    )
+    if workspace_id is None:
+        q = q.filter(ConnectorSyncJob.workspace_id.is_(None))
+    else:
+        q = q.filter(ConnectorSyncJob.workspace_id == workspace_id)
+    return q.order_by(ConnectorSyncJob.created_at.desc()).first()
+
+
+def enqueue_connector_sync_job(
+    db: Session,
+    *,
+    connector_id: UUID,
+    organization_id: UUID,
+    workspace_id: UUID | None,
+    requested_by_user_id: UUID | None,
+    full_sync: bool,
+) -> tuple[ConnectorSyncJob, bool]:
+    existing = get_active_sync_job(db, connector_id=connector_id, workspace_id=workspace_id)
+    if existing is not None:
+        return existing, False
+    job = ConnectorSyncJob(
+        connector_id=connector_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        requested_by_user_id=requested_by_user_id,
+        full_sync=bool(full_sync),
+        status=SYNC_JOB_QUEUED,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job, True
+
+
+def run_connector_sync_job(db: Session, job_id: UUID, *, claimed: bool = False) -> dict[str, Any]:
+    job = db.get(ConnectorSyncJob, job_id)
+    if job is None:
+        return {"status": "error", "detail": "sync job not found", "job_id": str(job_id)}
+    if job.status == SYNC_JOB_RUNNING and not claimed:
+        return {"status": "accepted", "detail": "sync job already running", "job_id": str(job.id)}
+    if job.status in (SYNC_JOB_COMPLETED, SYNC_JOB_FAILED):
+        return {
+            "status": "accepted",
+            "detail": "sync job already finalized",
+            "job_id": str(job.id),
+            "job_status": job.status,
+        }
+
+    if not claimed:
+        job.status = SYNC_JOB_RUNNING
+        job.started_at = utcnow()
+        job.finished_at = None
+        job.error_message = None
+        job.attempt_count = int(job.attempt_count or 0) + 1
+        db.commit()
+
+    try:
+        result = run_connector_sync(
+            db,
+            job.connector_id,
+            full_sync=job.full_sync,
+            workspace_id_override=job.workspace_id,
+        )
+        ok = result.get("status") == "ok"
+        job = db.get(ConnectorSyncJob, job_id)
+        if job is not None:
+            job.status = SYNC_JOB_COMPLETED if ok else SYNC_JOB_FAILED
+            job.documents_ingested = int(result.get("documents_ingested") or 0)
+            job.error_message = None if ok else str(result.get("detail") or "sync failed")
+            job.finished_at = utcnow()
+            db.commit()
+        return result
+    except Exception as exc:
+        logger.exception("run_connector_sync_job failed: job_id=%s", job_id)
+        job = db.get(ConnectorSyncJob, job_id)
+        if job is not None:
+            job.status = SYNC_JOB_FAILED
+            job.error_message = str(exc)
+            job.finished_at = utcnow()
+            db.commit()
+        return {"status": "error", "detail": str(exc), "job_id": str(job_id)}
+
+
+def claim_next_connector_sync_job(db: Session) -> ConnectorSyncJob | None:
+    """Atomically claim the oldest queued job using row locking."""
+    row = (
+        db.query(ConnectorSyncJob)
+        .filter(ConnectorSyncJob.status == SYNC_JOB_QUEUED)
+        .order_by(ConnectorSyncJob.created_at.asc())
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+    if row is None:
+        return None
+    row.status = SYNC_JOB_RUNNING
+    row.started_at = utcnow()
+    row.finished_at = None
+    row.error_message = None
+    row.attempt_count = int(row.attempt_count or 0) + 1
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def scheduled_sync_all_connectors(db: Session) -> dict[str, Any]:

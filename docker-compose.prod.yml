@@ -147,6 +147,39 @@ services:
       redis:
         condition: service_healthy
 
+  connector-sync-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_ROLE: connector-sync-worker
+      RUN_MIGRATIONS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://skp:skp@postgres:5432/skp}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_JSON: ${LOG_JSON:-true}
+      DOCUMENT_STORAGE_ROOT: /app/data/documents
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_OLLAMA_BASE_URL: ${EMBEDDING_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_HTTP_TIMEOUT_SECONDS: ${OLLAMA_HTTP_TIMEOUT_SECONDS:-180}
+      INGESTION_CHUNK_SIZE: ${INGESTION_CHUNK_SIZE:-1200}
+      INGESTION_CHUNK_OVERLAP: ${INGESTION_CHUNK_OVERLAP:-200}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_HOST: ${NANGO_HOST:-https://api.nango.dev}
+      CONNECTOR_SYNC_WORKER_POLL_SECONDS: ${CONNECTOR_SYNC_WORKER_POLL_SECONDS:-2}
+      CONNECTOR_SYNC_WORKER_MAX_JOBS_PER_TICK: ${CONNECTOR_SYNC_WORKER_MAX_JOBS_PER_TICK:-1}
+    volumes:
+      - skp_documents:/app/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   web:
     build:
       context: .

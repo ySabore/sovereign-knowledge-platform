@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
@@ -60,6 +61,7 @@ from app.services.ingestion import build_chunks, extract_pages_from_upload, pers
 from app.services.permissions import ensure_upload_permission_row
 from app.services.rag import resolve_top_k, run_retrieval_pipeline
 from app.services.rag.answer_parse import extract_confidence_tag
+from app.services.query_log import record_chat_turn_query_log
 from app.services.rate_limits import enforce_org_query_limits
 from app.services.workspace_access import resolve_workspace_for_user
 
@@ -496,6 +498,7 @@ def create_chat_message(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ChatTurnResponse:
+    t0 = time.perf_counter()
     session = _require_session_for_user(db, session_id, user)
     enforce_org_query_limits(request, db, session.organization_id, user)
     query = body.content.strip()
@@ -588,6 +591,18 @@ def create_chat_message(
     if should_replace_chat_title(session.title, query, user_turn_count=user_turn_count):
         session.title = derive_chat_session_title(query)
     session.updated_at = utcnow()
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+    record_chat_turn_query_log(
+        db,
+        organization_id=session.organization_id,
+        workspace_id=session.workspace_id,
+        user_id=user.id,
+        question=query,
+        answer=answer_text,
+        citations=citations if isinstance(citations, list) else [],
+        confidence=conf_val,
+        duration_ms=duration_ms,
+    )
 
     db.commit()
     db.refresh(session)

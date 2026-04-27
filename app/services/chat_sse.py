@@ -15,7 +15,7 @@ from app.services.embeddings import EmbeddingServiceError
 from app.services.chat_history import load_recent_conversation_turns
 from app.services.chat_titles import derive_chat_session_title, should_replace_chat_title
 from app.services.chat_workspace_facts import answer_workspace_fact_query
-from app.services.query_log import record_query_log
+from app.services.query_log import record_chat_turn_query_log
 from app.services.rag import resolve_top_k, run_retrieval_pipeline
 
 
@@ -70,7 +70,7 @@ async def sse_chat_turn_lines(
             session.title = derive_chat_session_title(query)
         session.updated_at = utcnow()
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        record_query_log(
+        record_chat_turn_query_log(
             db,
             organization_id=session.organization_id,
             workspace_id=session.workspace_id,
@@ -114,7 +114,7 @@ async def sse_chat_turn_lines(
             session.title = derive_chat_session_title(query)
         session.updated_at = utcnow()
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        record_query_log(
+        record_chat_turn_query_log(
             db,
             organization_id=session.organization_id,
             workspace_id=session.workspace_id,
@@ -194,7 +194,7 @@ async def sse_chat_turn_lines(
                 session.updated_at = utcnow()
 
                 duration_ms = int((time.perf_counter() - t0) * 1000)
-                record_query_log(
+                record_chat_turn_query_log(
                     db,
                     organization_id=session.organization_id,
                     workspace_id=session.workspace_id,
@@ -202,7 +202,7 @@ async def sse_chat_turn_lines(
                     question=query,
                     answer=final_text,
                     citations=citations if isinstance(citations, list) else [],
-                    confidence=str(confidence) if confidence is not None else None,
+                    confidence=confidence,
                     duration_ms=duration_ms,
                 )
                 db.commit()

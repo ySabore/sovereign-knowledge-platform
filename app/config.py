@@ -83,6 +83,18 @@ class Settings(BaseSettings):
         le=100000,
         description="Per-organization connector sync invocations allowed each UTC hour",
     )
+    connector_sync_worker_poll_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=60.0,
+        description="Idle wait between queue polls for connector sync worker.",
+    )
+    connector_sync_worker_max_jobs_per_tick: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="Max jobs processed in one poll tick by connector sync worker.",
+    )
     privileged_read_api_per_hour: int = Field(
         default=1000,
         ge=1,

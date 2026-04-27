@@ -8,6 +8,7 @@ Document-level RBAC.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
@@ -15,7 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Document, DocumentPermission, OrganizationMembership, User, WorkspaceMember
-from app.services.rag.types import RetrievalHit
+
+if TYPE_CHECKING:
+    from app.services.rag.types import RetrievalHit
 
 ORG_MEMBERSHIP_ADMIN = "org_owner"
 WORKSPACE_ADMIN = "workspace_admin"
@@ -107,13 +110,13 @@ def get_accessible_document_ids(
 
 def filter_chunks_by_permission(
     db: Session,
-    chunks: list[RetrievalHit],
+    chunks: list["RetrievalHit"],
     *,
     user_id: UUID,
     organization_id: UUID,
     workspace_id: UUID,
     user: User | None = None,
-) -> list[RetrievalHit]:
+) -> list["RetrievalHit"]:
     """Post-retrieval filter; in full mode, chunks whose documents lack permission are removed."""
     allowed = get_accessible_document_ids(
         db,

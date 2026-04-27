@@ -33,3 +33,32 @@ def record_query_log(
         duration_ms=duration_ms,
     )
     db.add(row)
+
+
+def record_chat_turn_query_log(
+    db: Session,
+    *,
+    organization_id: UUID,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    question: str,
+    answer: str | None,
+    citations: list[dict[str, Any]] | list[Any] | None,
+    confidence: str | None,
+    duration_ms: int | None,
+) -> None:
+    """Normalize and persist one chat turn into QueryLog."""
+    normalized_confidence = str(confidence).lower() if confidence is not None else None
+    if normalized_confidence not in {"high", "medium", "low"}:
+        normalized_confidence = None
+    record_query_log(
+        db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        question=question,
+        answer=answer,
+        citations=citations,
+        confidence=normalized_confidence,
+        duration_ms=duration_ms,
+    )
