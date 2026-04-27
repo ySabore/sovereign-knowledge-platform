@@ -111,7 +111,16 @@ In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON su
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DOCUMENT_STORAGE_ROOT` | `./data/documents` | PDF storage root. |
+| `DOCUMENT_STORAGE_ROOT` | `./data/documents` | Local storage root (used when `STORAGE_BACKEND=local`). |
+| `STORAGE_BACKEND` | `local` | Artifact storage backend: `local` or `s3`. |
+| `S3_BUCKET` | `` | S3 bucket for uploads/connectors when `STORAGE_BACKEND=s3`. |
+| `S3_REGION` | `` | AWS region for S3 API client. |
+| `S3_ENDPOINT_URL` | `` | Optional S3-compatible endpoint (e.g. MinIO). |
+| `S3_PREFIX` | `documents` | Object key prefix in S3 bucket. |
+| `S3_ACCESS_KEY_ID` | `` | Optional explicit access key (omit when using IAM roles). |
+| `S3_SECRET_ACCESS_KEY` | `` | Optional explicit secret key (omit when using IAM roles). |
+| `S3_SSE_MODE` | `` | Optional server-side encryption mode (`AES256` / `aws:kms`). |
+| `S3_KMS_KEY_ID` | `` | Optional KMS key ID for `aws:kms` encryption mode. |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Maximum PDF upload size. |
 | `INGESTION_CHUNK_SIZE` | `1200` | Characters per chunk. |
 | `INGESTION_CHUNK_OVERLAP` | `200` | Overlap between chunks. |

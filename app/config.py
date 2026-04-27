@@ -179,6 +179,18 @@ class Settings(BaseSettings):
 
     # --- Documents & ingestion ---
     document_storage_root: Path = Path("./data/documents")
+    storage_backend: str = Field(
+        default="local",
+        description="Document artifact storage backend: local | s3",
+    )
+    s3_bucket: str = Field(default="", description="S3 bucket for document artifacts when STORAGE_BACKEND=s3")
+    s3_region: str = Field(default="", description="AWS region for S3 API")
+    s3_endpoint_url: str = Field(default="", description="Optional custom endpoint (e.g. MinIO)")
+    s3_prefix: str = Field(default="documents", description="Prefix under the S3 bucket for stored objects")
+    s3_access_key_id: str = Field(default="", description="Optional explicit S3 access key")
+    s3_secret_access_key: str = Field(default="", description="Optional explicit S3 secret key")
+    s3_sse_mode: str = Field(default="", description="Optional S3 ServerSideEncryption value (AES256 | aws:kms)")
+    s3_kms_key_id: str = Field(default="", description="Optional S3 SSE-KMS key id")
     max_upload_size_mb: int = Field(default=50, ge=1, le=500, description="Maximum PDF upload size")
     ingestion_chunk_size: int = Field(default=1200, ge=100, le=50000)
     ingestion_chunk_overlap: int = Field(default=200, ge=0, le=10000)

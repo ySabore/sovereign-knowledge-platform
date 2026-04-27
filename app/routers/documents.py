@@ -42,6 +42,7 @@ from app.services.embeddings import EmbeddingServiceError, get_embedding_client
 from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.permissions import ensure_upload_permission_row
+from app.services.storage import cleanup_temp_extraction_file
 from app.services.rag import build_grounded_answer, resolve_top_k, run_retrieval_pipeline
 from app.services.rate_limits import enforce_org_query_limits
 from app.services.workspace_access import resolve_workspace_for_user
@@ -198,7 +199,10 @@ async def upload_document(
 
     stored = await persist_upload_file(file, settings.document_storage_root, workspace_id)
     upload_name = (file.filename or "document").strip() or "document"
-    pages = extract_pages_from_upload(stored.storage_path, upload_name)
+    try:
+        pages = extract_pages_from_upload(stored.extraction_path, upload_name)
+    finally:
+        cleanup_temp_extraction_file(stored.extraction_path, stored.storage_path)
     if not pages:
         raise HTTPException(
             status_code=422,
@@ -236,6 +240,11 @@ async def upload_document(
         filename=upload_name,
         content_type=_content_type_for_upload(upload_name, file.content_type),
         storage_path=stored.storage_path,
+        storage_provider=stored.storage_provider,
+        storage_bucket=stored.storage_bucket,
+        storage_key=stored.storage_key,
+        storage_size_bytes=stored.size_bytes,
+        storage_etag=stored.storage_etag,
         checksum_sha256=stored.checksum_sha256,
         source_type=src_label,
         status=DocumentStatus.indexed.value,

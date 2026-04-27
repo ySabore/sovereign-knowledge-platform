@@ -133,6 +133,8 @@ The repo now has a verified backend/auth foundation plus the persistence-layer s
 
 **Full reference:** [`docs/configuration.md`](docs/configuration.md) (every tunable env var). Copy `.env.example` to `.env`. Minimum: `DATABASE_URL`, `JWT_SECRET`, `JWT_ISSUER`, seed credentials for dev.
 
+Storage backend supports local filesystem (`STORAGE_BACKEND=local`) and S3 (`STORAGE_BACKEND=s3` with `S3_*` settings). To backfill existing document metadata (and optionally migrate local artifacts to S3), run `python scripts/backfill_storage_metadata.py --apply [--upload-local-to-s3]`.
+
 **Runtime (non-secret) config for UIs:** `GET /config/public` — embedding model, limits, feature flags (disable with `EXPOSE_PUBLIC_CONFIG=false`).
 
 **Operations / enterprise baseline (optional):**

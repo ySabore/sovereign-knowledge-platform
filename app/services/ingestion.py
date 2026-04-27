@@ -14,6 +14,7 @@ from fastapi import HTTPException, UploadFile, status
 from pypdf import PdfReader
 
 from app.config import settings
+from app.services.storage import get_storage_backend
 from app.services.text_cleaner import clean_text_for_ingestion
 
 # Tier 1 RAG uploads: PDF, Word, text, Markdown, HTML (see docs / product parity).
@@ -51,8 +52,13 @@ class ChunkRecord:
 @dataclass(slots=True)
 class StoredUpload:
     storage_path: str
+    extraction_path: str
     checksum_sha256: str
     size_bytes: int
+    storage_provider: str | None = None
+    storage_bucket: str | None = None
+    storage_key: str | None = None
+    storage_etag: str | None = None
 
 
 def validate_document_upload(upload: UploadFile) -> None:
@@ -76,9 +82,9 @@ def validate_document_upload(upload: UploadFile) -> None:
 async def persist_upload_file(upload: UploadFile, storage_root: Path, workspace_id: UUID) -> StoredUpload:
     validate_document_upload(upload)
     safe_name = Path(upload.filename or "document.pdf").name
-    destination_dir = storage_root / str(workspace_id)
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination_path = destination_dir / f"{uuid4()}-{safe_name}"
+    tmp_dir = storage_root / "_tmp_uploads"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    destination_path = tmp_dir / f"{uuid4()}-{safe_name}"
 
     hasher = hashlib.sha256()
     size_bytes = 0
@@ -101,10 +107,23 @@ async def persist_upload_file(upload: UploadFile, storage_root: Path, workspace_
             hasher.update(chunk)
 
     await upload.close()
-    return StoredUpload(
-        storage_path=str(destination_path.resolve()),
+    backend = get_storage_backend()
+    stored = backend.store_upload(
+        local_path=destination_path,
+        workspace_id=workspace_id,
+        safe_name=safe_name,
         checksum_sha256=hasher.hexdigest(),
         size_bytes=size_bytes,
+    )
+    return StoredUpload(
+        storage_path=stored.storage_uri,
+        extraction_path=stored.extraction_path,
+        checksum_sha256=stored.checksum_sha256,
+        size_bytes=stored.size_bytes,
+        storage_provider=stored.provider,
+        storage_bucket=stored.bucket,
+        storage_key=stored.key,
+        storage_etag=stored.etag,
     )
 
 
