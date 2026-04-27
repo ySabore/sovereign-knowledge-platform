@@ -12,6 +12,23 @@ class EmbeddingServiceError(RuntimeError):
     pass
 
 
+def _normalize_embeddings(raw_embeddings: Any, *, expected_text_count: int) -> list[list[float]]:
+    if not isinstance(raw_embeddings, list) or len(raw_embeddings) != expected_text_count:
+        raise EmbeddingServiceError("Ollama returned an invalid embeddings payload")
+
+    normalized: list[list[float]] = []
+    expected_dimensions = settings.embedding_dimensions
+    for embedding in raw_embeddings:
+        if not isinstance(embedding, list) or not embedding:
+            raise EmbeddingServiceError("Ollama returned an empty embedding vector")
+        if len(embedding) != expected_dimensions:
+            raise EmbeddingServiceError(
+                f"Embedding dimension mismatch: expected {expected_dimensions}, got {len(embedding)}"
+            )
+        normalized.append([float(value) for value in embedding])
+    return normalized
+
+
 class OllamaEmbeddingClient:
     def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 60.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -31,16 +48,7 @@ class OllamaEmbeddingClient:
             raise EmbeddingServiceError(f"Embedding request failed against Ollama: {exc}") from exc
 
         data: dict[str, Any] = response.json()
-        embeddings = data.get("embeddings")
-        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
-            raise EmbeddingServiceError("Ollama returned an invalid embeddings payload")
-
-        normalized: list[list[float]] = []
-        for embedding in embeddings:
-            if not isinstance(embedding, list) or not embedding:
-                raise EmbeddingServiceError("Ollama returned an empty embedding vector")
-            normalized.append([float(value) for value in embedding])
-        return normalized
+        return _normalize_embeddings(data.get("embeddings"), expected_text_count=len(texts))
 
     def embed_texts_batched(
         self,

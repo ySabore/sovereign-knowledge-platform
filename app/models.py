@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
+from app.config import settings
 from app.database import Base
 
 
@@ -199,6 +200,7 @@ class IntegrationConnector(Base):
 
     organization: Mapped[Organization] = relationship(back_populates="integration_connectors")
     documents: Mapped[list["Document"]] = relationship(back_populates="integration_connector")
+    sync_jobs: Mapped[list["ConnectorSyncJob"]] = relationship(back_populates="connector")
 
 
 class OrganizationMembership(Base):
@@ -279,6 +281,35 @@ class IngestionJob(Base):
     documents: Mapped[list[Document]] = relationship(back_populates="ingestion_job")
 
 
+class ConnectorSyncJob(Base):
+    __tablename__ = "connector_sync_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    full_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    documents_ingested: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    connector: Mapped[IntegrationConnector] = relationship(back_populates="sync_jobs")
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -343,7 +374,7 @@ class DocumentChunk(Base):
     content: Mapped[str] = mapped_column(Text)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dimensions), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     document: Mapped[Document] = relationship(back_populates="chunks")

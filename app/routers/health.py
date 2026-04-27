@@ -75,6 +75,7 @@ def health_ai() -> dict[str, Any]:
             "status": "not_ready",
             "checks": {"ollama": f"error: {exc}"},
             "expected_embedding_model": model,
+            "expected_embedding_dimensions": settings.embedding_dimensions,
         }
 
     names: list[str] = []
@@ -88,11 +89,13 @@ def health_ai() -> dict[str, Any]:
             "status": "not_ready",
             "checks": {"ollama": "ok", "model": "missing"},
             "expected_embedding_model": model,
+            "expected_embedding_dimensions": settings.embedding_dimensions,
             "available_models": names[:20],
         }
     return {
         "status": "ready",
         "checks": {"ollama": "ok", "model": "ok"},
         "expected_embedding_model": model,
+        "expected_embedding_dimensions": settings.embedding_dimensions,
         "available_models": names[:20],
     }

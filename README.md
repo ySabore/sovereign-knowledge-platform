@@ -83,6 +83,8 @@ docker compose -f docker-compose.prod.yml --env-file .env up --build -d
 docker compose -f docker-compose.prod.yml exec api runuser -u skp -- python /app/scripts/seed.py
 ```
 
+This stack now includes `connector-sync-worker`, which drains queued connector sync jobs out-of-band from API request workers.
+
 See `deploy/nginx.example.conf` for TLS + static `frontend/dist` + `/api` upstream.
 
 ### GPU-first local stack (RTX 5090 + Ollama in Docker)
@@ -147,7 +149,7 @@ Ingestion/retrieval-specific knobs:
 - `INGESTION_CHUNK_OVERLAP` → overlap between chunks (default `200`)
 - `EMBEDDING_PROVIDER` → currently `ollama`
 - `EMBEDDING_MODEL` → default `nomic-embed-text`
-- `EMBEDDING_DIMENSIONS` → pgvector size, default `768`
+- `EMBEDDING_DIMENSIONS` → pgvector size, default `768` (schema-level setting; after changing it, run the latest Alembic migration and re-index embeddings)
 - `EMBEDDING_OLLAMA_BASE_URL` → Ollama endpoint, default `http://127.0.0.1:11434`
 - `RETRIEVAL_TOP_K` → default semantic retrieval hit count
 - `CHAT_MIN_CITATION_SCORE` → minimum top-hit similarity score before chat answers anything other than the exact fallback

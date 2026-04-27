@@ -13,13 +13,20 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from app.config import settings
+
 revision: str = "002"
 down_revision: Union[str, None] = "001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _embedding_dimensions() -> int:
+    return int(settings.embedding_dimensions)
+
+
 def upgrade() -> None:
+    embedding_dimensions = _embedding_dimensions()
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
@@ -71,14 +78,15 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=True),
         sa.Column("embedding_model", sa.String(length=128), nullable=True),
-        sa.Column("embedding", pgvector.sqlalchemy.Vector(768), nullable=True),
+        sa.Column("embedding", pgvector.sqlalchemy.Vector(embedding_dimensions), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_document_chunks_document_id", "document_chunks", ["document_id"], unique=False)
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_cosine ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
+        "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_cosine "
+        "ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
     )
 
     op.create_table(

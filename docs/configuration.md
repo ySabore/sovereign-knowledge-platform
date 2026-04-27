@@ -100,6 +100,10 @@ In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON su
 |----------|---------|-------------|
 | `RATE_LIMIT_ENABLED` | `true` | Global SlowAPI switch. |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Default per-IP limit (health and `/config/public` exempt). |
+| `CONNECTOR_SYNC_PER_HOUR` | `60` | Per-organization connector sync enqueue cap (UTC hourly bucket). |
+| `PRIVILEGED_READ_API_PER_HOUR` | `1000` | Per-user cap for privileged read APIs (UTC hourly bucket). |
+| `CONNECTOR_SYNC_WORKER_POLL_SECONDS` | `2` | Queue poll interval for connector sync worker. |
+| `CONNECTOR_SYNC_WORKER_MAX_JOBS_PER_TICK` | `1` | Max connector sync jobs processed per poll cycle per worker process. |
 
 ---
 
@@ -120,7 +124,7 @@ In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON su
 |----------|---------|-------------|
 | `EMBEDDING_PROVIDER` | `ollama` | Currently only `ollama` is supported. |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model name. |
-| `EMBEDDING_DIMENSIONS` | `768` | Vector dimension (must match DB / migration). |
+| `EMBEDDING_DIMENSIONS` | `768` | Vector dimension. Changing it requires running the latest Alembic migration against Postgres and re-indexing existing document chunks so stored vectors match the new size. |
 | `EMBEDDING_OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama base URL for embeddings. |
 | `OLLAMA_HTTP_TIMEOUT_SECONDS` | `60` | Timeout for Ollama HTTP calls (embed + generate). |
 

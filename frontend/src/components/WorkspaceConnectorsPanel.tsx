@@ -66,6 +66,23 @@ type Row = {
   driveSync?: DriveSync | null;
 };
 type OrganizationConnectorPolicy = { allowed_connector_ids?: string[] | null };
+type ConnectorSyncEnqueueResponse = {
+  status?: string;
+  detail?: string;
+  job_id?: string;
+  job_status?: string;
+  created?: boolean;
+};
+type ConnectorSyncJobResponse = {
+  id: string;
+  status?: string;
+  documents_ingested?: number;
+  error_message?: string | null;
+};
+type ConnectorSyncState = {
+  jobId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+};
 
 function mapUiStatus(apiStatus: string): Row["status"] {
   const s = apiStatus.toLowerCase();
@@ -73,6 +90,28 @@ function mapUiStatus(apiStatus: string): Row["status"] {
   if (s === "syncing") return "syncing";
   if (s === "error" || s === "failed") return "error";
   return "pending";
+}
+
+function mapSyncJobStatus(status: string | undefined): ConnectorSyncState["status"] {
+  const normalized = String(status || "queued").toLowerCase();
+  if (normalized === "completed") return "completed";
+  if (normalized === "failed" || normalized === "error") return "failed";
+  if (normalized === "processing" || normalized === "running" || normalized === "syncing") return "processing";
+  return "queued";
+}
+
+function syncJobMessage(job: ConnectorSyncJobResponse): string {
+  const status = mapSyncJobStatus(job.status);
+  const docs = Number.isFinite(job.documents_ingested) ? Number(job.documents_ingested) : 0;
+  if (status === "completed") {
+    return docs > 0
+      ? `Sync finished: ${docs} documents ingested.`
+      : "Sync finished: 0 documents ingested. Verify the configured source scope and document access.";
+  }
+  if (status === "failed") {
+    return job.error_message?.trim() || "Sync failed.";
+  }
+  return status === "processing" ? "Sync is running…" : "Sync is queued…";
 }
 
 export function WorkspaceConnectorsPanel({
@@ -111,6 +150,7 @@ export function WorkspaceConnectorsPanel({
   const [modalError, setModalError] = useState<string | null>(null);
   const [allowedConnectorIds, setAllowedConnectorIds] = useState<Set<string> | null>(null);
   const [googleDriveScopeOpen, setGoogleDriveScopeOpen] = useState(false);
+  const [syncStateByCatalogId, setSyncStateByCatalogId] = useState<Record<string, ConnectorSyncState>>({});
 
   const googleDriveRow = useMemo(() => rows.find((r) => r.catalog.id === "google-drive"), [rows]);
 
@@ -350,37 +390,60 @@ export function WorkspaceConnectorsPanel({
     setBusy(catalogId);
     setMsg(null);
     try {
-      const { data } = await api.post<{
-        status?: string;
-        detail?: string;
-        documents_ingested?: number;
-        errors?: string[];
-      }>(`/connectors/${backendId}/sync`, {}, { params: { full_sync: false, workspace_id: workspaceId } });
-      const status = String(data?.status || "ok").toLowerCase();
-      const detail = typeof data?.detail === "string" ? data.detail : "";
-      const docs = Number.isFinite(data?.documents_ingested) ? Number(data?.documents_ingested) : null;
-      const errCount = Array.isArray(data?.errors) ? data.errors.filter(Boolean).length : 0;
-      if (status === "error") {
-        setMsg(detail || (errCount > 0 ? `Sync failed with ${errCount} item errors.` : "Sync failed."));
-      } else if (detail) {
-        setMsg(detail);
-      } else if (docs !== null) {
-        if (docs > 0) {
-          setMsg(
-            errCount > 0
-              ? `Sync finished: ${docs} documents ingested (${errCount} item errors).`
-              : `Sync finished: ${docs} documents ingested.`,
-          );
-        } else {
-          setMsg(
-            "Sync finished: 0 documents ingested. Verify the folder has Google Docs or text files this connected account can access.",
-          );
-        }
-      } else {
-        setMsg("Sync finished.");
+      const { data } = await api.post<ConnectorSyncEnqueueResponse>(
+        `/connectors/${backendId}/sync`,
+        {},
+        { params: { full_sync: false, workspace_id: workspaceId } },
+      );
+      const jobId = typeof data?.job_id === "string" ? data.job_id : "";
+      const jobStatus = mapSyncJobStatus(data?.job_status);
+      if (!jobId) {
+        setMsg(typeof data?.detail === "string" && data.detail ? data.detail : "Sync request accepted.");
+        await refresh();
+        return;
       }
+      setSyncStateByCatalogId((current) => ({
+        ...current,
+        [catalogId]: { jobId, status: jobStatus },
+      }));
+      setMsg(data?.created === false ? "Sync already in progress. Tracking existing job…" : "Sync queued. Tracking progress…");
+      setBusy(null);
+
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        }
+        const { data: job } = await api.get<ConnectorSyncJobResponse>(`/connectors/sync-jobs/${jobId}`);
+        const nextStatus = mapSyncJobStatus(job.status);
+        setSyncStateByCatalogId((current) => ({
+          ...current,
+          [catalogId]: { jobId, status: nextStatus },
+        }));
+        if (nextStatus === "completed" || nextStatus === "failed") {
+          setMsg(syncJobMessage(job));
+          setSyncStateByCatalogId((current) => {
+            const next = { ...current };
+            delete next[catalogId];
+            return next;
+          });
+          await refresh();
+          return;
+        }
+      }
+
+      setSyncStateByCatalogId((current) => {
+        const next = { ...current };
+        delete next[catalogId];
+        return next;
+      });
+      setMsg("Sync is still running. Refresh this workspace in a moment to see the latest document counts.");
       await refresh();
     } catch (e) {
+      setSyncStateByCatalogId((current) => {
+        const next = { ...current };
+        delete next[catalogId];
+        return next;
+      });
       setMsg(apiErrorMessage(e));
     } finally {
       setBusy(null);
@@ -500,6 +563,9 @@ export function WorkspaceConnectorsPanel({
             ? assignedWorkspaceNames.join(", ")
             : "Not assigned to any workspace";
           const isComingSoon = !r.catalog.backendReady && !r.backendId;
+          const syncState = syncStateByCatalogId[r.catalog.id];
+          const isSyncing = syncState?.status === "queued" || syncState?.status === "processing";
+          const effectiveStatus = isSyncing ? "syncing" : r.status;
           const googleDriveScopeRequired =
             r.catalog.id === "google-drive" &&
             r.backendId &&
@@ -510,7 +576,7 @@ export function WorkspaceConnectorsPanel({
               key={r.catalog.id}
               style={{
                 background: C.bgCard,
-                border: `1px solid ${r.status === "error" ? "rgba(239,68,68,0.35)" : C.bd}`,
+                border: `1px solid ${effectiveStatus === "error" ? "rgba(239,68,68,0.35)" : C.bd}`,
                 borderRadius: 14,
                 padding: "14px 14px 12px",
                 minHeight: 148,
@@ -583,6 +649,11 @@ export function WorkspaceConnectorsPanel({
             {r.backendId && r.assigned && (
               <div style={{ fontSize: 11, color: C.t2, marginBottom: 8 }}>
                 Indexed: <span style={{ fontFamily: C.mono, color: C.t1 }}>{r.docCount}</span>
+                {syncState && (
+                  <span style={{ marginLeft: 8, color: syncState.status === "failed" ? "#f87171" : C.t3 }}>
+                    · {syncState.status === "queued" ? "Queued" : syncState.status === "processing" ? "Syncing" : syncState.status}
+                  </span>
+                )}
               </div>
             )}
             <div style={{ marginTop: "auto", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -638,14 +709,14 @@ export function WorkspaceConnectorsPanel({
                       color: C.t1,
                       fontSize: 11,
                       fontWeight: 600,
-                      cursor: busy ? "wait" : "pointer",
-                      fontFamily: C.sans,
-                    }}
-                    disabled={busy === r.catalog.id || r.status === "syncing" || Boolean(googleDriveScopeRequired)}
+                    cursor: busy ? "wait" : "pointer",
+                    fontFamily: C.sans,
+                  }}
+                    disabled={busy === r.catalog.id || isSyncing || Boolean(googleDriveScopeRequired)}
                     onClick={() => void syncNow(r.catalog.id, r.backendId)}
                     title={googleDriveScopeRequired ? "Set Google Drive folder scope first." : undefined}
                   >
-                    {busy === r.catalog.id ? "…" : "Sync now"}
+                    {busy === r.catalog.id ? "…" : isSyncing ? "Syncing…" : "Sync now"}
                   </button>
                   <button
                     type="button"
