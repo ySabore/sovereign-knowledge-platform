@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    DocumentPermission,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -113,6 +114,20 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             self.workspace_id = ws.id
             self.workspace_unassigned_id = ws_unassigned.id
 
+            other_org = Organization(
+                name="Other RBAC Org",
+                slug=f"other-rbac-{uuid4().hex[:8]}",
+                tenant_key=f"other-tenant-{uuid4().hex[:8]}",
+                status=OrgStatus.active.value,
+            )
+            db.add(other_org)
+            db.flush()
+            other_ws = Workspace(organization_id=other_org.id, name="Other Org Workspace", description="Cross-org")
+            db.add(other_ws)
+            db.flush()
+            self.other_org_id = other_org.id
+            self.other_workspace_id = other_ws.id
+
             db.add_all(
                 [
                     OrganizationMembership(
@@ -183,7 +198,19 @@ class RBACRoleEnforcementTests(unittest.TestCase):
                 status="indexed",
                 page_count=1,
             )
-            db.add_all([self.editor_doc, self.other_doc])
+            self.cross_org_doc = Document(
+                organization_id=other_org.id,
+                workspace_id=other_ws.id,
+                created_by=None,
+                filename="other-org.txt",
+                content_type="text/plain",
+                storage_path="",
+                source_type="file-upload",
+                external_id=str(uuid4()),
+                status="indexed",
+                page_count=1,
+            )
+            db.add_all([self.editor_doc, self.other_doc, self.cross_org_doc])
             db.flush()
             self.connector = IntegrationConnector(
                 organization_id=org.id,
@@ -229,6 +256,7 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             db.commit()
             db.refresh(self.editor_doc)
             db.refresh(self.other_doc)
+            db.refresh(self.cross_org_doc)
             db.refresh(self.connector)
         finally:
             db.close()
@@ -377,6 +405,39 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_permission_sync_rejects_cross_org_items(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": "google-drive",
+                "items": [
+                    {
+                        "document_id": str(self.editor_doc.id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": f"{self.editor_doc.external_id}:org",
+                    },
+                    {
+                        "document_id": str(self.cross_org_doc.id),
+                        "organization_id": str(self.other_org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": f"{self.cross_org_doc.external_id}:org",
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            self.assertEqual(db.query(DocumentPermission).count(), 0)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

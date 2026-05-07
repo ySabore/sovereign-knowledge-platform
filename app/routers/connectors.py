@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -737,6 +738,27 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
+    if any(item.organization_id != org_id for item in body.items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission sync items must belong to one authorized organization",
+        )
+    document_ids = {item.document_id for item in body.items}
+    found_document_ids = {
+        row[0]
+        for row in db.query(Document.id)
+        .filter(Document.id.in_(document_ids), Document.organization_id == org_id)
+        .all()
+    }
+    if found_document_ids != document_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission sync items must target documents in the authorized organization",
+        )
     raw = [item.model_dump(mode="json") for item in body.items]
-    n = sync_permissions(db, body.connector_id, raw)
+    try:
+        n = sync_permissions(db, body.connector_id, raw)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"updated": n, "connector_id": body.connector_id}

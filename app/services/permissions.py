@@ -177,7 +177,7 @@ def sync_permissions(
     Each item: document_id (UUID str), organization_id (UUID str), user_id (optional UUID str),
     can_read (bool), source (str), external_id (str).
     """
-    count = 0
+    normalized: list[tuple[UUID, UUID, UUID | None, bool, str, str]] = []
     for raw in items:
         document_id = UUID(str(raw["document_id"]))
         organization_id = UUID(str(raw["organization_id"]))
@@ -185,7 +185,15 @@ def sync_permissions(
         can_read = bool(raw.get("can_read", True))
         source = str(raw["source"])
         external_id = str(raw["external_id"])
+        doc = db.get(Document, document_id)
+        if doc is None:
+            raise ValueError("Permission sync item references an unknown document")
+        if doc.organization_id != organization_id:
+            raise ValueError("Permission sync item organization does not match the target document")
+        normalized.append((document_id, organization_id, user_id, can_read, source, external_id))
 
+    count = 0
+    for document_id, organization_id, user_id, can_read, source, external_id in normalized:
         existing = (
             db.query(DocumentPermission)
             .filter(
