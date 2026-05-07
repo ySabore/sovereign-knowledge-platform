@@ -45,6 +45,14 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
             if should_migrate:
                 local_path = Path(doc.storage_path)
                 if local_path.is_file():
+                    changed = True
+                    if not apply_changes:
+                        # Dry-run must not upload or delete artifacts; only report that the row would change.
+                        if changed:
+                            updated += 1
+                            db.rollback()
+                            db.expire_all()
+                        continue
                     stored = backend.store_upload(
                         local_path=local_path,
                         workspace_id=doc.workspace_id,
@@ -58,8 +66,15 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     doc.storage_key = stored.key
                     doc.storage_etag = stored.etag
                     doc.storage_size_bytes = stored.size_bytes
+                    updated += 1
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                        raise
                     local_path.unlink(missing_ok=True)
-                    changed = True
+                    db.expire_all()
+                    continue
 
             if changed:
                 updated += 1
