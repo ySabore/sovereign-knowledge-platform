@@ -24,6 +24,12 @@ class StorageUriParseTests(unittest.TestCase):
         self.assertIsNone(parsed.bucket)
         self.assertIsNone(parsed.key)
 
+    def test_parse_inline_uri(self) -> None:
+        parsed = parse_storage_uri("inline://google-drive/file-123")
+        self.assertEqual(parsed.provider, "inline")
+        self.assertIsNone(parsed.bucket)
+        self.assertEqual(parsed.key, "google-drive/file-123")
+
 
 if __name__ == "__main__":
     unittest.main()
