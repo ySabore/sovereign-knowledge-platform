@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -735,8 +736,25 @@ def sync_connector_permissions(
     """Upsert `DocumentPermission` rows from connector-reported ACLs."""
     if not body.items:
         return {"updated": 0}
-    org_id = body.items[0].organization_id
+    org_ids = {item.organization_id for item in body.items}
+    if len(org_ids) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission sync items must belong to one authorized organization",
+        )
+    org_id = next(iter(org_ids))
     _require_connector_manage_access(db, org_id, user)
+    document_ids = {item.document_id for item in body.items}
+    authorized_document_count = (
+        db.query(Document.id)
+        .filter(Document.organization_id == org_id, Document.id.in_(list(document_ids)))
+        .count()
+    )
+    if authorized_document_count != len(document_ids):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission sync includes documents outside the authorized organization",
+        )
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)
     return {"updated": n, "connector_id": body.connector_id}

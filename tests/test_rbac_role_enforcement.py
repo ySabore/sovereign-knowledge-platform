@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    DocumentPermission,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -377,6 +378,75 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_permission_sync_rejects_cross_org_batch(self) -> None:
+        db = self.SessionLocal()
+        try:
+            other_org = Organization(
+                name="Other RBAC Org",
+                slug=f"other-rbac-{uuid4().hex[:8]}",
+                tenant_key=f"tenant-{uuid4().hex[:8]}",
+                status=OrgStatus.active.value,
+            )
+            db.add(other_org)
+            db.flush()
+            other_workspace = Workspace(
+                organization_id=other_org.id,
+                name="Other Workspace",
+                description="Cross-org permission target",
+            )
+            db.add(other_workspace)
+            db.flush()
+            other_doc = Document(
+                organization_id=other_org.id,
+                workspace_id=other_workspace.id,
+                filename="other-org.txt",
+                content_type="text/plain",
+                storage_path="",
+                source_type="file-upload",
+                external_id=str(uuid4()),
+                status="indexed",
+                page_count=1,
+            )
+            db.add(other_doc)
+            db.commit()
+            other_org_id = other_org.id
+            other_doc_id = other_doc.id
+        finally:
+            db.close()
+
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": "google-drive",
+                "items": [
+                    {
+                        "document_id": str(self.editor_doc.id),
+                        "organization_id": str(self.org_id),
+                        "source": "google-drive",
+                        "external_id": "allowed-doc",
+                        "can_read": True,
+                    },
+                    {
+                        "document_id": str(other_doc_id),
+                        "organization_id": str(other_org_id),
+                        "source": "google-drive",
+                        "external_id": "cross-org-doc",
+                        "can_read": True,
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            permission_count = db.query(DocumentPermission).filter(DocumentPermission.document_id == other_doc_id).count()
+            self.assertEqual(permission_count, 0)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
