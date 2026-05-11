@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -373,6 +374,27 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
     if _has_workspace_role_in_org(db, org_id, user.id, {WorkspaceMemberRole.workspace_admin.value}):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector management requires workspace admin or higher")
+
+
+def _validate_permission_sync_scope(db: Session, org_id: UUID, items: list[PermissionSyncItem]) -> None:
+    if any(item.organization_id != org_id for item in items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission sync items must belong to one organization",
+        )
+
+    document_ids = {item.document_id for item in items}
+    found_ids = {
+        row[0]
+        for row in db.query(Document.id)
+        .filter(Document.id.in_(document_ids), Document.organization_id == org_id)
+        .all()
+    }
+    if found_ids != document_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission sync document not found",
+        )
 
 
 @router.post("/activate")
@@ -737,6 +759,7 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
+    _validate_permission_sync_scope(db, org_id, body.items)
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)
     return {"updated": n, "connector_id": body.connector_id}
