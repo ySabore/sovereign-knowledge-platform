@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    DocumentPermission,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -333,6 +334,48 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_reactivate_google_drive_preserves_workspace_drive_scope(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        assign = self.client.put(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+        patch = self.client.patch(
+            f"/connectors/{self.connector.id}/config",
+            json={
+                "workspace_id": str(self.workspace_id),
+                "drive_folder_ids": ["folderA", "folderB"],
+                "drive_include_subfolders": False,
+            },
+            headers=headers,
+        )
+        self.assertEqual(patch.status_code, 200, patch.text)
+
+        reactivate = self.client.post(
+            "/connectors/activate",
+            json={
+                "integration_id": "google-drive",
+                "connection_id": "conn-rbac-reactivated",
+                "organization_id": str(self.org_id),
+                "workspace_id": str(self.workspace_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(reactivate.status_code, 200, reactivate.text)
+
+        db = self.SessionLocal()
+        try:
+            conn = db.get(IntegrationConnector, self.connector.id)
+            self.assertIsNotNone(conn)
+            cfg = conn.config if isinstance(conn.config, dict) else {}
+            ws_cfg = (cfg.get("workspace_settings") or {}).get(str(self.workspace_id))
+            self.assertIsInstance(ws_cfg, dict)
+            self.assertEqual(ws_cfg.get("drive_folder_ids"), ["folderA", "folderB"])
+            self.assertFalse(bool(ws_cfg.get("drive_include_subfolders", True)))
+        finally:
+            db.close()
+
     def test_workspace_admin_cannot_patch_drive_scope_for_unmanaged_workspace(self) -> None:
         headers = self._login("ws-admin-rbac@example.com")
         resp = self.client.patch(
@@ -377,6 +420,74 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_permission_sync_rejects_document_outside_authorized_org(self) -> None:
+        db = self.SessionLocal()
+        try:
+            other_org = Organization(
+                name="Other RBAC Org",
+                slug=f"other-rbac-{uuid4().hex[:8]}",
+                tenant_key=f"other-tenant-{uuid4().hex[:8]}",
+                status=OrgStatus.active.value,
+            )
+            db.add(other_org)
+            db.flush()
+            other_ws = Workspace(
+                organization_id=other_org.id,
+                name="Other Workspace",
+                description="Cross-org target",
+            )
+            db.add(other_ws)
+            db.flush()
+            other_doc = Document(
+                organization_id=other_org.id,
+                workspace_id=other_ws.id,
+                filename="other-org.txt",
+                content_type="text/plain",
+                storage_path="",
+                source_type="file-upload",
+                external_id=str(uuid4()),
+                status="indexed",
+                page_count=1,
+            )
+            db.add(other_doc)
+            db.commit()
+            other_doc_id = other_doc.id
+        finally:
+            db.close()
+
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": "google-drive",
+                "items": [
+                    {
+                        "document_id": str(self.editor_doc.id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "own-doc",
+                    },
+                    {
+                        "document_id": str(other_doc_id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "other-org-doc",
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            rows = db.query(DocumentPermission).filter(DocumentPermission.document_id == other_doc_id).all()
+            self.assertEqual(rows, [])
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

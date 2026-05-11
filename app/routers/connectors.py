@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -235,10 +236,13 @@ def _update_workspace_drive_sync(
 
 def _initialize_workspace_drive_sync(cfg: dict[str, Any], *, workspace_id: UUID) -> None:
     ws_map = _workspace_settings_map(cfg)
-    ws_map[str(workspace_id)] = {
-        "drive_folder_ids": [],
-        "drive_include_subfolders": True,
-    }
+    ws_map.setdefault(
+        str(workspace_id),
+        {
+            "drive_folder_ids": [],
+            "drive_include_subfolders": True,
+        },
+    )
     cfg["workspace_settings"] = ws_map
 
 
@@ -375,6 +379,27 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector management requires workspace admin or higher")
 
 
+def _validate_permission_sync_scope(db: Session, org_id: UUID, items: list[PermissionSyncItem]) -> None:
+    if any(item.organization_id != org_id for item in items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission sync items must belong to one organization",
+        )
+
+    document_ids = {item.document_id for item in items}
+    found_ids = {
+        row[0]
+        for row in db.query(Document.id)
+        .filter(Document.id.in_(document_ids), Document.organization_id == org_id)
+        .all()
+    }
+    if found_ids != document_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission sync document not found",
+        )
+
+
 @router.post("/activate")
 @limiter.exempt
 def activate_connector(
@@ -430,7 +455,20 @@ def activate_connector(
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
                 merged = dict(existing.config or {})
-                merged.update(cfg)
+                incoming_ws_settings = _workspace_settings_map(cfg)
+                for key, value in cfg.items():
+                    if key != "workspace_settings":
+                        merged[key] = value
+                if incoming_ws_settings:
+                    existing_ws_settings = _workspace_settings_map(merged)
+                    explicit_drive_scope = body.drive_folder_ids is not None or body.drive_include_subfolders is not None
+                    for ws_id, ws_cfg in incoming_ws_settings.items():
+                        if ws_id in existing_ws_settings and not explicit_drive_scope:
+                            continue
+                        scoped = dict(existing_ws_settings.get(ws_id) or {})
+                        scoped.update(ws_cfg)
+                        existing_ws_settings[ws_id] = scoped
+                    merged["workspace_settings"] = existing_ws_settings
                 if target_workspace_id:
                     scoped_ids: list[UUID] = []
                     for wid in _workspace_config_ids(merged):
@@ -737,6 +775,7 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
+    _validate_permission_sync_scope(db, org_id, body.items)
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)
     return {"updated": n, "connector_id": body.connector_id}
