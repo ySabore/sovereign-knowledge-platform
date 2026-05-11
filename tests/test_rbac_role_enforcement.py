@@ -334,6 +334,48 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_reactivate_google_drive_preserves_workspace_drive_scope(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        assign = self.client.put(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+        patch = self.client.patch(
+            f"/connectors/{self.connector.id}/config",
+            json={
+                "workspace_id": str(self.workspace_id),
+                "drive_folder_ids": ["folderA", "folderB"],
+                "drive_include_subfolders": False,
+            },
+            headers=headers,
+        )
+        self.assertEqual(patch.status_code, 200, patch.text)
+
+        reactivate = self.client.post(
+            "/connectors/activate",
+            json={
+                "integration_id": "google-drive",
+                "connection_id": "conn-rbac-reactivated",
+                "organization_id": str(self.org_id),
+                "workspace_id": str(self.workspace_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(reactivate.status_code, 200, reactivate.text)
+
+        db = self.SessionLocal()
+        try:
+            conn = db.get(IntegrationConnector, self.connector.id)
+            self.assertIsNotNone(conn)
+            cfg = conn.config if isinstance(conn.config, dict) else {}
+            ws_cfg = (cfg.get("workspace_settings") or {}).get(str(self.workspace_id))
+            self.assertIsInstance(ws_cfg, dict)
+            self.assertEqual(ws_cfg.get("drive_folder_ids"), ["folderA", "folderB"])
+            self.assertFalse(bool(ws_cfg.get("drive_include_subfolders", True)))
+        finally:
+            db.close()
+
     def test_workspace_admin_cannot_patch_drive_scope_for_unmanaged_workspace(self) -> None:
         headers = self._login("ws-admin-rbac@example.com")
         resp = self.client.patch(
