@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    DocumentPermission,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -106,12 +107,28 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             db.flush()
             self.org_id = org.id
 
+            external_org = Organization(
+                name="External RBAC Org",
+                slug=f"external-rbac-{uuid4().hex[:8]}",
+                tenant_key=f"external-tenant-{uuid4().hex[:8]}",
+                status=OrgStatus.active.value,
+            )
+            db.add(external_org)
+            db.flush()
+            self.external_org_id = external_org.id
+
             ws = Workspace(organization_id=org.id, name="Assigned Workspace", description="Primary test workspace")
             ws_unassigned = Workspace(organization_id=org.id, name="Unassigned Workspace", description="No member rows")
-            db.add_all([ws, ws_unassigned])
+            external_ws = Workspace(
+                organization_id=external_org.id,
+                name="External Workspace",
+                description="Different organization workspace",
+            )
+            db.add_all([ws, ws_unassigned, external_ws])
             db.flush()
             self.workspace_id = ws.id
             self.workspace_unassigned_id = ws_unassigned.id
+            self.external_workspace_id = external_ws.id
 
             db.add_all(
                 [
@@ -183,7 +200,19 @@ class RBACRoleEnforcementTests(unittest.TestCase):
                 status="indexed",
                 page_count=1,
             )
-            db.add_all([self.editor_doc, self.other_doc])
+            self.external_doc = Document(
+                organization_id=external_org.id,
+                workspace_id=external_ws.id,
+                created_by=None,
+                filename="external-owned.txt",
+                content_type="text/plain",
+                storage_path="",
+                source_type="file-upload",
+                external_id=str(uuid4()),
+                status="indexed",
+                page_count=1,
+            )
+            db.add_all([self.editor_doc, self.other_doc, self.external_doc])
             db.flush()
             self.connector = IntegrationConnector(
                 organization_id=org.id,
@@ -229,6 +258,7 @@ class RBACRoleEnforcementTests(unittest.TestCase):
             db.commit()
             db.refresh(self.editor_doc)
             db.refresh(self.other_doc)
+            db.refresh(self.external_doc)
             db.refresh(self.connector)
         finally:
             db.close()
@@ -377,6 +407,74 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_permission_sync_rejects_mixed_organization_batch(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": "conn-rbac-1",
+                "items": [
+                    {
+                        "document_id": str(self.editor_doc.id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "drive-doc-internal",
+                    },
+                    {
+                        "document_id": str(self.external_doc.id),
+                        "organization_id": str(self.external_org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "drive-doc-external",
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            rows = db.query(DocumentPermission).filter(DocumentPermission.source == "google-drive").all()
+            self.assertEqual(rows, [])
+        finally:
+            db.close()
+
+    def test_permission_sync_rejects_document_outside_authorized_organization(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": "conn-rbac-1",
+                "items": [
+                    {
+                        "document_id": str(self.external_doc.id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "drive-doc-external",
+                    }
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            row = (
+                db.query(DocumentPermission)
+                .filter(
+                    DocumentPermission.document_id == self.external_doc.id,
+                    DocumentPermission.source == "google-drive",
+                )
+                .one_or_none()
+            )
+            self.assertIsNone(row)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
