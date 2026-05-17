@@ -175,5 +175,8 @@ def parse_storage_uri(storage_uri: str | None) -> ParsedStorageUri:
     if raw.startswith("local://"):
         key = raw.removeprefix("local://")
         return ParsedStorageUri(provider="local", bucket=None, key=key or None)
+    if raw.startswith("inline://"):
+        key = raw.removeprefix("inline://")
+        return ParsedStorageUri(provider="inline", bucket=None, key=key or None)
     return ParsedStorageUri(provider="local", bucket=None, key=raw)
 
