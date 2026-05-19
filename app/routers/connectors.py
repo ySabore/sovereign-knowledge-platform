@@ -235,10 +235,13 @@ def _update_workspace_drive_sync(
 
 def _initialize_workspace_drive_sync(cfg: dict[str, Any], *, workspace_id: UUID) -> None:
     ws_map = _workspace_settings_map(cfg)
-    ws_map[str(workspace_id)] = {
-        "drive_folder_ids": [],
-        "drive_include_subfolders": True,
-    }
+    ws_map.setdefault(
+        str(workspace_id),
+        {
+            "drive_folder_ids": [],
+            "drive_include_subfolders": True,
+        },
+    )
     cfg["workspace_settings"] = ws_map
 
 
@@ -430,7 +433,20 @@ def activate_connector(
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
                 merged = dict(existing.config or {})
-                merged.update(cfg)
+                incoming_ws_settings = _workspace_settings_map(cfg)
+                for key, value in cfg.items():
+                    if key != "workspace_settings":
+                        merged[key] = value
+                if incoming_ws_settings:
+                    existing_ws_settings = _workspace_settings_map(merged)
+                    explicit_drive_scope = body.drive_folder_ids is not None or body.drive_include_subfolders is not None
+                    for ws_id, ws_cfg in incoming_ws_settings.items():
+                        if ws_id in existing_ws_settings and not explicit_drive_scope:
+                            continue
+                        scoped = dict(existing_ws_settings.get(ws_id) or {})
+                        scoped.update(ws_cfg)
+                        existing_ws_settings[ws_id] = scoped
+                    merged["workspace_settings"] = existing_ws_settings
                 if target_workspace_id:
                     scoped_ids: list[UUID] = []
                     for wid in _workspace_config_ids(merged):
