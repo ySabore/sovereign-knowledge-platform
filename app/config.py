@@ -95,6 +95,12 @@ class Settings(BaseSettings):
         le=100,
         description="Max jobs processed in one poll tick by connector sync worker.",
     )
+    connector_sync_job_stale_after_seconds: int = Field(
+        default=21600,
+        ge=60,
+        le=604800,
+        description="Fail running connector sync jobs older than this so a replacement can be queued.",
+    )
     privileged_read_api_per_hour: int = Field(
         default=1000,
         ge=1,
