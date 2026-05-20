@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -258,6 +259,30 @@ def _require_google_drive_workspace_scope(conn: IntegrationConnector, workspace_
         status_code=status.HTTP_409_CONFLICT,
         detail="Google Drive folder scope is required before syncing this workspace.",
     )
+
+
+def _validate_permission_sync_scope(db: Session, org_id: UUID, items: list[PermissionSyncItem]) -> None:
+    if any(item.organization_id != org_id for item in items):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission sync batch cannot span organizations.",
+        )
+    document_ids = {item.document_id for item in items}
+    if not document_ids:
+        return
+    owned_document_ids = set(
+        db.scalars(
+            select(Document.id).where(
+                Document.id.in_(document_ids),
+                Document.organization_id == org_id,
+            )
+        ).all()
+    )
+    if owned_document_ids != document_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission sync includes documents outside the authorized organization.",
+        )
 
 
 @router.get("/organization/{organization_id}")
@@ -737,6 +762,7 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
+    _validate_permission_sync_scope(db, org_id, body.items)
     raw = [item.model_dump(mode="json") for item in body.items]
     n = sync_permissions(db, body.connector_id, raw)
     return {"updated": n, "connector_id": body.connector_id}

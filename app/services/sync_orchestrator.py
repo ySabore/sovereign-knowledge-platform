@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import ConnectorSyncJob, IntegrationConnector, Organization, Workspace, utcnow
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured
@@ -22,6 +24,7 @@ SYNC_JOB_QUEUED = "queued"
 SYNC_JOB_RUNNING = "running"
 SYNC_JOB_COMPLETED = "completed"
 SYNC_JOB_FAILED = "failed"
+SYNC_JOB_STALE_MESSAGE = "Connector sync job timed out before completion; enqueue a replacement."
 
 
 @dataclass(slots=True)
@@ -205,6 +208,7 @@ def get_active_sync_job(
     connector_id: UUID,
     workspace_id: UUID | None,
 ) -> ConnectorSyncJob | None:
+    fail_stale_running_sync_jobs(db, connector_id=connector_id, workspace_id=workspace_id)
     q = db.query(ConnectorSyncJob).filter(
         ConnectorSyncJob.connector_id == connector_id,
         ConnectorSyncJob.status.in_([SYNC_JOB_QUEUED, SYNC_JOB_RUNNING]),
@@ -214,6 +218,36 @@ def get_active_sync_job(
     else:
         q = q.filter(ConnectorSyncJob.workspace_id == workspace_id)
     return q.order_by(ConnectorSyncJob.created_at.desc()).first()
+
+
+def fail_stale_running_sync_jobs(
+    db: Session,
+    *,
+    connector_id: UUID | None = None,
+    workspace_id: UUID | None = None,
+) -> int:
+    cutoff = utcnow() - timedelta(seconds=int(settings.connector_sync_job_stale_after_seconds))
+    q = db.query(ConnectorSyncJob).filter(
+        ConnectorSyncJob.status == SYNC_JOB_RUNNING,
+        ConnectorSyncJob.started_at.is_not(None),
+        ConnectorSyncJob.started_at < cutoff,
+    )
+    if connector_id is not None:
+        q = q.filter(ConnectorSyncJob.connector_id == connector_id)
+    if workspace_id is None:
+        q = q.filter(ConnectorSyncJob.workspace_id.is_(None))
+    else:
+        q = q.filter(ConnectorSyncJob.workspace_id == workspace_id)
+    rows = q.all()
+    if not rows:
+        return 0
+    now = utcnow()
+    for row in rows:
+        row.status = SYNC_JOB_FAILED
+        row.error_message = SYNC_JOB_STALE_MESSAGE
+        row.finished_at = now
+    db.commit()
+    return len(rows)
 
 
 def enqueue_connector_sync_job(

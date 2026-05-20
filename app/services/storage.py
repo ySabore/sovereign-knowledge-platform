@@ -77,7 +77,7 @@ class LocalFileStorage(BaseStorage):
 
 
 class S3Storage(BaseStorage):
-    def __init__(self) -> None:
+    def __init__(self, *, require_bucket: bool = True) -> None:
         try:
             import boto3
         except Exception as exc:
@@ -93,7 +93,7 @@ class S3Storage(BaseStorage):
             kwargs["aws_secret_access_key"] = settings.s3_secret_access_key.strip()
         self.client = boto3.client("s3", **kwargs)
         self.bucket = settings.s3_bucket.strip()
-        if not self.bucket:
+        if require_bucket and not self.bucket:
             raise RuntimeError("STORAGE_BACKEND=s3 requires S3_BUCKET")
 
     def _build_key(self, workspace_id: UUID, safe_name: str) -> str:
@@ -110,6 +110,8 @@ class S3Storage(BaseStorage):
         checksum_sha256: str,
         size_bytes: int,
     ) -> StorageWriteResult:
+        if not self.bucket:
+            raise RuntimeError("STORAGE_BACKEND=s3 requires S3_BUCKET")
         key = self._build_key(workspace_id, safe_name)
         extra: dict[str, str] = {"Metadata": {"sha256": checksum_sha256}}
         if settings.s3_sse_mode.strip():
@@ -145,6 +147,13 @@ def get_storage_backend() -> BaseStorage:
     if backend == "s3":
         return S3Storage()
     return LocalFileStorage(settings.document_storage_root)
+
+
+def delete_storage_uri(storage_uri: str) -> None:
+    if storage_uri.startswith("s3://"):
+        S3Storage(require_bucket=False).delete_by_uri(storage_uri)
+        return
+    LocalFileStorage(settings.document_storage_root).delete_by_uri(storage_uri)
 
 
 def cleanup_temp_extraction_file(extraction_path: str, storage_uri: str) -> None:
