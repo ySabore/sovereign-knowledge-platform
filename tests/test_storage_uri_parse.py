@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
-from app.services.storage import parse_storage_uri
+from app.services.storage import delete_storage_uri, parse_storage_uri
 
 
 class StorageUriParseTests(unittest.TestCase):
@@ -23,6 +26,22 @@ class StorageUriParseTests(unittest.TestCase):
         self.assertIsNone(parsed.provider)
         self.assertIsNone(parsed.bucket)
         self.assertIsNone(parsed.key)
+
+    def test_delete_storage_uri_dispatches_s3_by_uri(self) -> None:
+        with patch("app.services.storage.S3Storage") as storage_cls:
+            delete_storage_uri("s3://my-bucket/a/b/file.pdf")
+
+        storage_cls.assert_called_once_with(require_bucket=False)
+        storage_cls.return_value.delete_by_uri.assert_called_once_with("s3://my-bucket/a/b/file.pdf")
+
+    def test_delete_storage_uri_removes_local_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "document.txt"
+            path.write_text("hello", encoding="utf-8")
+
+            delete_storage_uri(str(path))
+
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

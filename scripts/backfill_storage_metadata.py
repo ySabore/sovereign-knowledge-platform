@@ -10,10 +10,34 @@ from app.models import Document
 from app.services.storage import get_storage_backend, parse_storage_uri
 
 
+def _migrate_local_artifact_to_s3(doc: Document, backend, *, apply_changes: bool) -> tuple[bool, Path | None]:
+    local_path = Path(doc.storage_path)
+    if not local_path.is_file():
+        return False, None
+    if not apply_changes:
+        return True, None
+
+    stored = backend.store_upload(
+        local_path=local_path,
+        workspace_id=doc.workspace_id,
+        safe_name=Path(doc.filename or "document").name,
+        checksum_sha256=doc.checksum_sha256 or "",
+        size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
+    )
+    doc.storage_path = stored.storage_uri
+    doc.storage_provider = stored.provider
+    doc.storage_bucket = stored.bucket
+    doc.storage_key = stored.key
+    doc.storage_etag = stored.etag
+    doc.storage_size_bytes = stored.size_bytes
+    return True, local_path
+
+
 def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int]:
     scanned = 0
     updated = 0
     backend = get_storage_backend()
+    local_paths_to_delete: list[Path] = []
     db = SessionLocal()
     try:
         rows = db.scalars(select(Document).order_by(Document.created_at.asc())).all()
@@ -43,22 +67,14 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                 and getattr(backend, "__class__", type(backend)).__name__ == "S3Storage"
             )
             if should_migrate:
-                local_path = Path(doc.storage_path)
-                if local_path.is_file():
-                    stored = backend.store_upload(
-                        local_path=local_path,
-                        workspace_id=doc.workspace_id,
-                        safe_name=Path(doc.filename or "document").name,
-                        checksum_sha256=doc.checksum_sha256 or "",
-                        size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
-                    )
-                    doc.storage_path = stored.storage_uri
-                    doc.storage_provider = stored.provider
-                    doc.storage_bucket = stored.bucket
-                    doc.storage_key = stored.key
-                    doc.storage_etag = stored.etag
-                    doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
+                migrated, local_path_to_delete = _migrate_local_artifact_to_s3(
+                    doc,
+                    backend,
+                    apply_changes=apply_changes,
+                )
+                if migrated:
+                    if local_path_to_delete is not None:
+                        local_paths_to_delete.append(local_path_to_delete)
                     changed = True
 
             if changed:
@@ -68,6 +84,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     db.expire_all()
         if apply_changes:
             db.commit()
+            for local_path in local_paths_to_delete:
+                local_path.unlink(missing_ok=True)
     finally:
         db.close()
     return scanned, updated
