@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -260,6 +261,45 @@ def _require_google_drive_workspace_scope(conn: IntegrationConnector, workspace_
     )
 
 
+def _require_permission_sync_scope(db: Session, body: PermissionSyncBody, user: User) -> IntegrationConnector:
+    try:
+        connector_uuid = UUID(body.connector_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="connector_id must be an integration connector UUID",
+        ) from None
+
+    conn = db.get(IntegrationConnector, connector_uuid)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+
+    _require_connector_manage_access(db, conn.organization_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
+
+    for item in body.items:
+        if item.organization_id != conn.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Permission item organization does not match connector organization",
+            )
+        if item.source.strip().lower() != conn.connector_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Permission item source does not match connector type",
+            )
+        document = db.get(Document, item.document_id)
+        if document is None or document.organization_id != conn.organization_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission item document not found")
+        if document.integration_connector_id != conn.id or document.source_type != conn.connector_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Permission item document is not owned by this connector",
+            )
+
+    return conn
+
+
 @router.get("/organization/{organization_id}")
 @limiter.exempt
 def list_organization_connectors(
@@ -487,6 +527,7 @@ def assign_connector_to_workspace(
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
     _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     scoped_ids: list[UUID] = []
     for wid in _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}):
         try:
@@ -675,6 +716,7 @@ def sync_connector_now(
             _require_google_drive_workspace_scope(conn, workspace_id)
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
     job, created = enqueue_connector_sync_job(
         db,
@@ -735,8 +777,7 @@ def sync_connector_permissions(
     """Upsert `DocumentPermission` rows from connector-reported ACLs."""
     if not body.items:
         return {"updated": 0}
-    org_id = body.items[0].organization_id
-    _require_connector_manage_access(db, org_id, user)
+    conn = _require_permission_sync_scope(db, body, user)
     raw = [item.model_dump(mode="json") for item in body.items]
-    n = sync_permissions(db, body.connector_id, raw)
-    return {"updated": n, "connector_id": body.connector_id}
+    n = sync_permissions(db, str(conn.id), raw)
+    return {"updated": n, "connector_id": str(conn.id)}

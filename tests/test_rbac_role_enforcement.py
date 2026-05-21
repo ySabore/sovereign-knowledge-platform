@@ -15,6 +15,7 @@ from app.main import create_app
 from app.models import (
     AuditLog,
     Document,
+    DocumentPermission,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -377,6 +378,101 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_workspace_admin_cannot_assign_disallowed_org_connector(self) -> None:
+        headers = self._login("ws-admin-rbac@example.com")
+        set_policy = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["google-drive"]},
+            headers=self._login("org-owner-rbac@example.com"),
+        )
+        self.assertEqual(set_policy.status_code, 200, set_policy.text)
+        db = self.SessionLocal()
+        try:
+            disallowed = IntegrationConnector(
+                organization_id=self.org_id,
+                connector_type="notion",
+                nango_connection_id="conn-rbac-notion",
+                status="active",
+                config=None,
+            )
+            db.add(disallowed)
+            db.commit()
+            db.refresh(disallowed)
+            disallowed_id = disallowed.id
+        finally:
+            db.close()
+
+        resp = self.client.put(
+            f"/connectors/{disallowed_id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("not enabled for the organization", resp.text)
+
+    def test_sync_rejects_disallowed_org_connector(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        set_policy = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["google-drive"]},
+            headers=headers,
+        )
+        self.assertEqual(set_policy.status_code, 200, set_policy.text)
+        db = self.SessionLocal()
+        try:
+            disallowed = IntegrationConnector(
+                organization_id=self.org_id,
+                connector_type="notion",
+                nango_connection_id="conn-rbac-notion-sync",
+                status="active",
+                config=None,
+            )
+            db.add(disallowed)
+            db.commit()
+            db.refresh(disallowed)
+            disallowed_id = disallowed.id
+        finally:
+            db.close()
+
+        resp = self.client.post(f"/connectors/{disallowed_id}/sync", headers=headers)
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("not enabled for the organization", resp.text)
+
+    def test_permission_sync_rejects_document_not_owned_by_connector(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": str(self.connector.id),
+                "items": [
+                    {
+                        "document_id": str(self.other_doc.id),
+                        "organization_id": str(self.org_id),
+                        "user_id": None,
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "forged-acl-row",
+                    }
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("not owned by this connector", resp.text)
+
+        db = self.SessionLocal()
+        try:
+            row = (
+                db.query(DocumentPermission)
+                .filter(
+                    DocumentPermission.document_id == self.other_doc.id,
+                    DocumentPermission.external_id == "forged-acl-row",
+                )
+                .one_or_none()
+            )
+            self.assertIsNone(row)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
