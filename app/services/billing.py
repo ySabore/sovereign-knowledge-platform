@@ -455,6 +455,20 @@ def register_connector_integration(db: Session, organization_id: UUID, integrati
     db.add(OrganizationConnector(organization_id=organization_id, integration_key=key))
 
 
+def unregister_connector_integration(db: Session, organization_id: UUID, integration_key: str) -> None:
+    key = integration_key.strip()
+    if not key:
+        return
+    (
+        db.query(OrganizationConnector)
+        .filter(
+            OrganizationConnector.organization_id == organization_id,
+            OrganizationConnector.integration_key == key,
+        )
+        .delete(synchronize_session=False)
+    )
+
+
 def apply_subscription_object_to_org(db: Session, org: Organization, sub: dict[str, Any]) -> None:
     """Update org plan + Stripe ids from a Subscription object."""
     sid = sub.get("id")

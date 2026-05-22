@@ -27,7 +27,12 @@ from app.models import (
     WorkspaceMemberRole,
 )
 from app.routers.organizations import _write_audit_log
-from app.services.billing import ensure_connector_slot, invalidate_plan_cache, register_connector_integration
+from app.services.billing import (
+    ensure_connector_slot,
+    invalidate_plan_cache,
+    register_connector_integration,
+    unregister_connector_integration,
+)
 from app.services.nango_client import (
     create_connect_session,
     nango_configured,
@@ -543,6 +548,7 @@ def remove_connector_from_workspace(
             metadata={"connector_type": conn.connector_type, "reason": "removed_last_workspace_assignment"},
         )
         invalidate_plan_cache(conn.organization_id)
+        unregister_connector_integration(db, conn.organization_id, conn.connector_type)
         db.execute(delete(IntegrationConnector).where(IntegrationConnector.id == connector_id))
         db.commit()
         return
@@ -645,6 +651,7 @@ def delete_integration_connector(
         metadata={"connector_type": conn.connector_type},
     )
     invalidate_plan_cache(conn.organization_id)
+    unregister_connector_integration(db, conn.organization_id, conn.connector_type)
     db.execute(delete(IntegrationConnector).where(IntegrationConnector.id == connector_id))
     db.commit()
 
