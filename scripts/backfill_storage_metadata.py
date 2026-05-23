@@ -14,6 +14,7 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
     scanned = 0
     updated = 0
     backend = get_storage_backend()
+    migrated_local_paths: list[Path] = []
     db = SessionLocal()
     try:
         rows = db.scalars(select(Document).order_by(Document.created_at.asc())).all()
@@ -45,20 +46,21 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
             if should_migrate:
                 local_path = Path(doc.storage_path)
                 if local_path.is_file():
-                    stored = backend.store_upload(
-                        local_path=local_path,
-                        workspace_id=doc.workspace_id,
-                        safe_name=Path(doc.filename or "document").name,
-                        checksum_sha256=doc.checksum_sha256 or "",
-                        size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
-                    )
-                    doc.storage_path = stored.storage_uri
-                    doc.storage_provider = stored.provider
-                    doc.storage_bucket = stored.bucket
-                    doc.storage_key = stored.key
-                    doc.storage_etag = stored.etag
-                    doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
+                    if apply_changes:
+                        stored = backend.store_upload(
+                            local_path=local_path,
+                            workspace_id=doc.workspace_id,
+                            safe_name=Path(doc.filename or "document").name,
+                            checksum_sha256=doc.checksum_sha256 or "",
+                            size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
+                        )
+                        doc.storage_path = stored.storage_uri
+                        doc.storage_provider = stored.provider
+                        doc.storage_bucket = stored.bucket
+                        doc.storage_key = stored.key
+                        doc.storage_etag = stored.etag
+                        doc.storage_size_bytes = stored.size_bytes
+                        migrated_local_paths.append(local_path)
                     changed = True
 
             if changed:
@@ -68,6 +70,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     db.expire_all()
         if apply_changes:
             db.commit()
+            for local_path in migrated_local_paths:
+                local_path.unlink(missing_ok=True)
     finally:
         db.close()
     return scanned, updated
