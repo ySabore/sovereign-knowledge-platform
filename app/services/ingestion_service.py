@@ -113,21 +113,27 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
             db.flush()
             document.ingestion_job_id = job.id
 
-    _delete_chunks_for_document(db, document.id)
-
     chunks = build_chunks_from_plain_text(params.content)
     if not chunks:
-        document.status = DocumentStatus.failed.value
-        db.commit()
+        if existing is None:
+            document.status = DocumentStatus.failed.value
+            db.commit()
+        else:
+            db.rollback()
         raise ValueError("No chunks produced after cleaning; nothing to index")
 
     try:
         client = get_embedding_client()
         embeddings = client.embed_texts_batched([c.content for c in chunks])
     except EmbeddingServiceError:
-        document.status = DocumentStatus.failed.value
-        db.commit()
+        if existing is None:
+            document.status = DocumentStatus.failed.value
+            db.commit()
+        else:
+            db.rollback()
         raise
+
+    _delete_chunks_for_document(db, document.id)
 
     for ch, emb in zip(chunks, embeddings, strict=True):
         db.add(
