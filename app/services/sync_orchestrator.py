@@ -51,6 +51,14 @@ def _workspace_effective_config(cfg: dict[str, Any], workspace_id: UUID) -> dict
     return merged
 
 
+def _connector_enabled_for_org(org: Organization, connector_type: str) -> bool:
+    raw = org.allowed_connector_ids if isinstance(org.allowed_connector_ids, list) else None
+    if not raw:
+        return True
+    allowed = {str(item).strip().lower() for item in raw if str(item).strip()}
+    return connector_type.strip().lower() in allowed
+
+
 def _ingest_fetch_result(
     db: Session,
     doc: DocumentFetchResult,
@@ -96,6 +104,8 @@ def run_connector_sync(
     org = db.get(Organization, conn.organization_id)
     if org is None:
         return {"status": "error", "detail": "organization not found"}
+    if not _connector_enabled_for_org(org, conn.connector_type):
+        return {"status": "error", "detail": "connector disabled by organization policy"}
 
     cfg = conn.config if isinstance(conn.config, dict) else {}
     workspace_id = workspace_id_override or _resolve_workspace_id(db, org.id, cfg)
