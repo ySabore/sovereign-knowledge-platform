@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from app.config import settings
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -41,6 +46,31 @@ class AlembicRevisionTests(unittest.TestCase):
         config = Config(str(ROOT / "alembic.ini"))
         script = ScriptDirectory.from_config(config)
         self.assertEqual(script.get_heads(), ["022"])
+
+    def test_embedding_dimension_migration_refuses_to_retype_existing_vectors(self) -> None:
+        path = VERSIONS_DIR / "021_embedding_dimensions_configurable.py"
+        spec = importlib.util.spec_from_file_location("embedding_dimensions_configurable", path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        old_dimensions = settings.embedding_dimensions
+        try:
+            settings.embedding_dimensions = 384
+            module._retype_embedding_column = Mock()
+            module.op = SimpleNamespace(
+                get_bind=lambda: SimpleNamespace(
+                    execute=lambda _: SimpleNamespace(first=lambda: object()),
+                )
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "existing embeddings"):
+                module.upgrade()
+
+            module._retype_embedding_column.assert_not_called()
+        finally:
+            settings.embedding_dimensions = old_dimensions
 
 
 if __name__ == "__main__":
