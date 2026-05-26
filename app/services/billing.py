@@ -245,6 +245,11 @@ def _is_missing_subscription_error(exc: Exception) -> bool:
     return "no such subscription" in msg or "resource_missing" in msg
 
 
+def _subscription_is_non_canceled(sub: dict[str, Any]) -> bool:
+    status = str(sub.get("status") or "").strip().lower()
+    return status not in {"canceled", "incomplete_expired"}
+
+
 def _has_non_canceled_subscription(org: Organization) -> bool:
     sub_id = (org.stripe_subscription_id or "").strip()
     if not sub_id or not stripe_configured():
@@ -265,8 +270,34 @@ def _has_non_canceled_subscription(org: Organization) -> bool:
         # Fail closed on transient Stripe errors to avoid creating duplicate subscriptions.
         raise RuntimeError("Could not verify existing Stripe subscription state; try again shortly.") from exc
     sub = sub_obj.to_dict() if hasattr(sub_obj, "to_dict") else dict(sub_obj)
-    status = str(sub.get("status") or "").strip().lower()
-    return status not in {"canceled", "incomplete_expired"}
+    return _subscription_is_non_canceled(sub)
+
+
+def _customer_has_non_canceled_subscription(customer_id: str) -> bool:
+    customer = (customer_id or "").strip()
+    if not customer or not stripe_configured():
+        return False
+    _configure_stripe()
+    import stripe
+
+    try:
+        listed = stripe.Subscription.list(customer=customer, status="all", limit=100)
+    except Exception as exc:
+        if _is_missing_customer_error(exc):
+            logger.warning("stripe customer missing while checking subscriptions: customer=%s", customer)
+            return False
+        # Fail closed on transient Stripe errors to avoid creating duplicate subscriptions.
+        raise RuntimeError("Could not verify existing Stripe customer subscriptions; try again shortly.") from exc
+
+    if hasattr(listed, "auto_paging_iter"):
+        items = listed.auto_paging_iter()
+    else:
+        items = (listed.get("data") if isinstance(listed, dict) else []) or []
+    for sub_obj in items:
+        sub = sub_obj.to_dict() if hasattr(sub_obj, "to_dict") else dict(sub_obj)
+        if _subscription_is_non_canceled(sub):
+            return True
+    return False
 
 
 def create_checkout_session(
@@ -284,11 +315,29 @@ def create_checkout_session(
             "This organization already has an active Stripe subscription. "
             "Use the Billing portal to switch plans instead of starting a new checkout.",
         )
+    if org.stripe_customer_id and _customer_has_non_canceled_subscription(org.stripe_customer_id):
+        raise RuntimeError(
+            "This organization already has an active Stripe subscription. "
+            "Use the Billing portal to switch plans instead of starting a new checkout.",
+        )
     email = org_owner_email(db, org.id)
     if not email:
         raise RuntimeError("No org owner email found for Checkout customer_email")
     _configure_stripe()
     import stripe
+
+    customer_id = (org.stripe_customer_id or "").strip()
+    if not customer_id:
+        customer_obj = stripe.Customer.create(email=email, metadata={"organization_id": str(org.id)})
+        if hasattr(customer_obj, "to_dict"):
+            customer = customer_obj.to_dict()
+        else:
+            customer = dict(customer_obj)
+        customer_id = str(customer.get("id") or "").strip()
+        if not customer_id:
+            raise RuntimeError("Stripe did not return a customer id for Checkout")
+        org.stripe_customer_id = customer_id
+        db.flush()
 
     kwargs: dict[str, Any] = {
         "mode": "subscription",
@@ -297,11 +346,8 @@ def create_checkout_session(
         "cancel_url": cancel_url,
         "metadata": {"organization_id": str(org.id)},
         "subscription_data": {"metadata": {"organization_id": str(org.id)}},
+        "customer": customer_id,
     }
-    if org.stripe_customer_id:
-        kwargs["customer"] = org.stripe_customer_id
-    else:
-        kwargs["customer_email"] = email
 
     session = stripe.checkout.Session.create(**kwargs)
     invalidate_plan_cache(org.id)
