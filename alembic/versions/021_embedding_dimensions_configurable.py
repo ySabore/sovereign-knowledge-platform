@@ -7,6 +7,7 @@ Revises: 020
 from typing import Sequence, Union
 
 import pgvector.sqlalchemy
+import sqlalchemy as sa
 from alembic import op
 
 from app.config import settings
@@ -37,8 +38,20 @@ def _retype_embedding_column(dimensions: int) -> None:
     )
 
 
+def _has_existing_embeddings() -> bool:
+    bind = op.get_bind()
+    row = bind.execute(sa.text("SELECT 1 FROM document_chunks WHERE embedding IS NOT NULL LIMIT 1")).first()
+    return row is not None
+
+
 def upgrade() -> None:
-    _retype_embedding_column(_embedding_dimensions())
+    dimensions = _embedding_dimensions()
+    if dimensions != 768 and _has_existing_embeddings():
+        raise RuntimeError(
+            "Changing EMBEDDING_DIMENSIONS with existing embeddings would corrupt retrieval vectors. "
+            "Reindex documents before applying this migration with a non-768 dimension."
+        )
+    _retype_embedding_column(dimensions)
 
 
 def downgrade() -> None:

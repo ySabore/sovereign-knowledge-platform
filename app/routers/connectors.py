@@ -487,6 +487,7 @@ def assign_connector_to_workspace(
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
     _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     scoped_ids: list[UUID] = []
     for wid in _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}):
         try:
@@ -593,6 +594,7 @@ def patch_integration_connector_config(
             )
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     if conn.connector_type != "google-drive":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -675,6 +677,7 @@ def sync_connector_now(
             _require_google_drive_workspace_scope(conn, workspace_id)
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
     job, created = enqueue_connector_sync_job(
         db,

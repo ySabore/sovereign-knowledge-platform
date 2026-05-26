@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -77,7 +80,7 @@ class LocalFileStorage(BaseStorage):
 
 
 class S3Storage(BaseStorage):
-    def __init__(self) -> None:
+    def __init__(self, *, require_bucket: bool = True) -> None:
         try:
             import boto3
         except Exception as exc:
@@ -93,7 +96,7 @@ class S3Storage(BaseStorage):
             kwargs["aws_secret_access_key"] = settings.s3_secret_access_key.strip()
         self.client = boto3.client("s3", **kwargs)
         self.bucket = settings.s3_bucket.strip()
-        if not self.bucket:
+        if require_bucket and not self.bucket:
             raise RuntimeError("STORAGE_BACKEND=s3 requires S3_BUCKET")
 
     def _build_key(self, workspace_id: UUID, safe_name: str) -> str:
@@ -111,14 +114,18 @@ class S3Storage(BaseStorage):
         size_bytes: int,
     ) -> StorageWriteResult:
         key = self._build_key(workspace_id, safe_name)
-        extra: dict[str, str] = {"Metadata": {"sha256": checksum_sha256}}
+        extra: dict[str, object] = {"Metadata": {"sha256": checksum_sha256}}
         if settings.s3_sse_mode.strip():
             extra["ServerSideEncryption"] = settings.s3_sse_mode.strip()
         if settings.s3_kms_key_id.strip():
             extra["SSEKMSKeyId"] = settings.s3_kms_key_id.strip()
         self.client.upload_file(str(local_path), self.bucket, key, ExtraArgs=extra)
-        head = self.client.head_object(Bucket=self.bucket, Key=key)
-        etag = str(head.get("ETag") or "").strip().strip('"') or None
+        etag = None
+        try:
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+            etag = str(head.get("ETag") or "").strip().strip('"') or None
+        except Exception as exc:
+            logger.warning("Uploaded s3://%s/%s but could not read ETag: %s", self.bucket, key, exc)
         return StorageWriteResult(
             storage_uri=f"s3://{self.bucket}/{key}",
             extraction_path=str(local_path),
@@ -145,6 +152,14 @@ def get_storage_backend() -> BaseStorage:
     if backend == "s3":
         return S3Storage()
     return LocalFileStorage(settings.document_storage_root)
+
+
+def delete_storage_uri(storage_uri: str) -> None:
+    parsed = parse_storage_uri(storage_uri)
+    if parsed.provider == "s3":
+        S3Storage(require_bucket=False).delete_by_uri(storage_uri)
+    elif parsed.provider == "local":
+        LocalFileStorage(settings.document_storage_root).delete_by_uri(storage_uri)
 
 
 def cleanup_temp_extraction_file(extraction_path: str, storage_uri: str) -> None:

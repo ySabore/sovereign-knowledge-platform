@@ -378,6 +378,29 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
 
+    def test_existing_disallowed_connector_cannot_be_assigned_or_synced(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        set_policy = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["notion"]},
+            headers=headers,
+        )
+        self.assertEqual(set_policy.status_code, 200, set_policy.text)
+
+        assign = self.client.put(
+            f"/connectors/{self.connector.id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(assign.status_code, 403, assign.text)
+        self.assertIn("not enabled for the organization", assign.text)
+
+        sync = self.client.post(
+            f"/connectors/{self.connector.id}/sync",
+            headers=headers,
+        )
+        self.assertEqual(sync.status_code, 403, sync.text)
+        self.assertIn("not enabled for the organization", sync.text)
+
 
 if __name__ == "__main__":
     unittest.main()

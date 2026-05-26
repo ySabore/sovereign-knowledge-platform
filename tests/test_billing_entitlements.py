@@ -94,6 +94,85 @@ class BillingEntitlementsTests(unittest.TestCase):
                 )
         self.assertIn("already has an active Stripe subscription", str(ctx.exception))
 
+    def test_create_checkout_session_blocks_when_customer_has_active_subscription(self) -> None:
+        class FakeSub:
+            @staticmethod
+            def list(*args, **kwargs):
+                self.assertEqual(kwargs.get("customer"), "cus_demo")
+                return SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "sub_active_demo", "status": "active"}]))
+
+        fake_stripe = SimpleNamespace(Subscription=FakeSub)
+        org = SimpleNamespace(
+            id="org-1",
+            stripe_subscription_id=None,
+            stripe_customer_id="cus_demo",
+        )
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch.dict(sys.modules, {"stripe": fake_stripe}):
+            with self.assertRaises(RuntimeError) as ctx:
+                create_checkout_session(
+                    db=None,  # type: ignore[arg-type]
+                    org=org,  # type: ignore[arg-type]
+                    price_id="price_new",
+                    success_url="http://localhost/success",
+                    cancel_url="http://localhost/cancel",
+                )
+        self.assertIn("already has an active Stripe subscription", str(ctx.exception))
+
+    def test_create_checkout_session_persists_customer_before_session_create(self) -> None:
+        class FakeSub:
+            @staticmethod
+            def retrieve(_: str):
+                raise AssertionError("subscription id is absent")
+
+            @staticmethod
+            def list(*args, **kwargs):
+                raise AssertionError("customer id is absent before creation")
+
+        class FakeCustomer:
+            @staticmethod
+            def create(*args, **kwargs):
+                self.assertEqual(kwargs.get("email"), "owner@example.com")
+                return {"id": "cus_new"}
+
+        class FakeCheckoutSession:
+            @staticmethod
+            def create(**kwargs):
+                self.assertEqual(kwargs.get("customer"), "cus_new")
+                self.assertNotIn("customer_email", kwargs)
+                return SimpleNamespace(url="https://checkout.example/session", id="cs_test")
+
+        fake_stripe = SimpleNamespace(
+            Subscription=FakeSub,
+            Customer=FakeCustomer,
+            checkout=SimpleNamespace(Session=FakeCheckoutSession),
+        )
+        org = SimpleNamespace(
+            id="org-1",
+            stripe_subscription_id=None,
+            stripe_customer_id=None,
+        )
+        db = SimpleNamespace(flushed=False, flush=lambda: setattr(db, "flushed", True))
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch("app.services.billing.org_owner_email", return_value="owner@example.com"), patch(
+            "app.services.billing.invalidate_plan_cache"
+        ), patch.dict(sys.modules, {"stripe": fake_stripe}):
+            out = create_checkout_session(
+                db=db,  # type: ignore[arg-type]
+                org=org,  # type: ignore[arg-type]
+                price_id="price_new",
+                success_url="http://localhost/success",
+                cancel_url="http://localhost/cancel",
+            )
+
+        self.assertTrue(db.flushed)
+        self.assertEqual(org.stripe_customer_id, "cus_new")
+        self.assertEqual(out["session_id"], "cs_test")
+
 
 if __name__ == "__main__":
     unittest.main()
