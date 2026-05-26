@@ -33,7 +33,8 @@ class AlembicRevisionTests(unittest.TestCase):
             revision = _literal_assignment(module, "revision")
             self.assertIsNotNone(revision, f"{path.name} is missing revision")
             previous = revisions.get(str(revision))
-            self.assertIsNone(previous, f"Duplicate Alembic revision {revision!r}: {previous.name} and {path.name}")
+            if previous is not None:
+                self.fail(f"Duplicate Alembic revision {revision!r}: {previous.name} and {path.name}")
             revisions[str(revision)] = path
 
     def test_revision_graph_has_single_head(self) -> None:
