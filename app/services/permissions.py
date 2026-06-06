@@ -170,6 +170,8 @@ def sync_permissions(
     db: Session,
     connector_id: str,
     items: list[dict],
+    *,
+    organization_id: UUID | None = None,
 ) -> int:
     """
     Upsert `DocumentPermission` rows from a connector sync.
@@ -180,7 +182,12 @@ def sync_permissions(
     count = 0
     for raw in items:
         document_id = UUID(str(raw["document_id"]))
-        organization_id = UUID(str(raw["organization_id"]))
+        item_organization_id = UUID(str(raw["organization_id"]))
+        if organization_id is not None and item_organization_id != organization_id:
+            raise ValueError("Permission sync item organization does not match authorized organization")
+        document = db.get(Document, document_id)
+        if document is None or document.organization_id != item_organization_id:
+            raise ValueError("Permission sync document does not belong to the requested organization")
         user_id = UUID(str(raw["user_id"])) if raw.get("user_id") else None
         can_read = bool(raw.get("can_read", True))
         source = str(raw["source"])
@@ -196,7 +203,7 @@ def sync_permissions(
             .one_or_none()
         )
         if existing:
-            existing.organization_id = organization_id
+            existing.organization_id = item_organization_id
             existing.user_id = user_id
             existing.can_read = can_read
             existing.connector_id = connector_id
@@ -204,7 +211,7 @@ def sync_permissions(
             db.add(
                 DocumentPermission(
                     document_id=document_id,
-                    organization_id=organization_id,
+                    organization_id=item_organization_id,
                     user_id=user_id,
                     can_read=can_read,
                     source=source,

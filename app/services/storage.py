@@ -93,8 +93,6 @@ class S3Storage(BaseStorage):
             kwargs["aws_secret_access_key"] = settings.s3_secret_access_key.strip()
         self.client = boto3.client("s3", **kwargs)
         self.bucket = settings.s3_bucket.strip()
-        if not self.bucket:
-            raise RuntimeError("STORAGE_BACKEND=s3 requires S3_BUCKET")
 
     def _build_key(self, workspace_id: UUID, safe_name: str) -> str:
         prefix = settings.s3_prefix.strip().strip("/")
@@ -110,6 +108,8 @@ class S3Storage(BaseStorage):
         checksum_sha256: str,
         size_bytes: int,
     ) -> StorageWriteResult:
+        if not self.bucket:
+            raise RuntimeError("STORAGE_BACKEND=s3 requires S3_BUCKET")
         key = self._build_key(workspace_id, safe_name)
         extra: dict[str, str] = {"Metadata": {"sha256": checksum_sha256}}
         if settings.s3_sse_mode.strip():
@@ -147,6 +147,14 @@ def get_storage_backend() -> BaseStorage:
     return LocalFileStorage(settings.document_storage_root)
 
 
+def delete_storage_uri(storage_uri: str | None) -> None:
+    parsed = parse_storage_uri(storage_uri)
+    if parsed.provider == "s3":
+        S3Storage().delete_by_uri(storage_uri or "")
+    elif parsed.provider == "local":
+        LocalFileStorage(settings.document_storage_root).delete_by_uri(storage_uri or "")
+
+
 def cleanup_temp_extraction_file(extraction_path: str, storage_uri: str) -> None:
     if not extraction_path:
         return
@@ -175,5 +183,8 @@ def parse_storage_uri(storage_uri: str | None) -> ParsedStorageUri:
     if raw.startswith("local://"):
         key = raw.removeprefix("local://")
         return ParsedStorageUri(provider="local", bucket=None, key=key or None)
+    scheme, sep, payload = raw.partition("://")
+    if sep:
+        return ParsedStorageUri(provider=scheme or None, bucket=None, key=payload or None)
     return ParsedStorageUri(provider="local", bucket=None, key=raw)
 

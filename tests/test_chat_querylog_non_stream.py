@@ -59,9 +59,17 @@ class ChatQueryLogNonStreamingTests(unittest.TestCase):
                 is_active=True,
                 is_platform_owner=False,
             )
-            db.add(user)
+            other_user = User(
+                email="querylog-other@example.com",
+                password_hash=hash_password("ChangeMeNow!"),
+                full_name="Other Query User",
+                is_active=True,
+                is_platform_owner=False,
+            )
+            db.add_all([user, other_user])
             db.flush()
             self.user_id = user.id
+            self.other_user_id = other_user.id
 
             org = Organization(
                 name="QueryLog Org",
@@ -85,12 +93,24 @@ class ChatQueryLogNonStreamingTests(unittest.TestCase):
                     role=OrgMembershipRole.member.value,
                 )
             )
-            db.add(
-                WorkspaceMember(
-                    user_id=user.id,
-                    workspace_id=workspace.id,
-                    role=WorkspaceMemberRole.member.value,
-                )
+            db.add_all(
+                [
+                    OrganizationMembership(
+                        user_id=other_user.id,
+                        organization_id=org.id,
+                        role=OrgMembershipRole.member.value,
+                    ),
+                    WorkspaceMember(
+                        user_id=user.id,
+                        workspace_id=workspace.id,
+                        role=WorkspaceMemberRole.member.value,
+                    ),
+                    WorkspaceMember(
+                        user_id=other_user.id,
+                        workspace_id=workspace.id,
+                        role=WorkspaceMemberRole.member.value,
+                    ),
+                ]
             )
             db.flush()
 
@@ -103,6 +123,15 @@ class ChatQueryLogNonStreamingTests(unittest.TestCase):
             db.add(session)
             db.flush()
             self.session_id = session.id
+            other_session = ChatSession(
+                organization_id=org.id,
+                workspace_id=workspace.id,
+                user_id=other_user.id,
+                title="Other user's private chat",
+            )
+            db.add(other_session)
+            db.flush()
+            self.other_session_id = other_session.id
             db.commit()
         finally:
             db.close()
@@ -139,6 +168,15 @@ class ChatQueryLogNonStreamingTests(unittest.TestCase):
             self.assertTrue(any(item.get("text") == question for item in metrics.get("top_queries", [])))
         finally:
             db.close()
+
+    def test_workspace_member_cannot_read_another_members_chat_session(self) -> None:
+        headers = self._login()
+
+        own_resp = self.client.get(f"/chat/sessions/{self.session_id}", headers=headers)
+        other_resp = self.client.get(f"/chat/sessions/{self.other_session_id}", headers=headers)
+
+        self.assertEqual(own_resp.status_code, 200, own_resp.text)
+        self.assertEqual(other_resp.status_code, 404, other_resp.text)
 
     def test_api_chat_stream_alias_persists_query_log_and_metrics(self) -> None:
         headers = self._login()
