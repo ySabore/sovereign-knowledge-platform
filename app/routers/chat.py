@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -63,10 +64,13 @@ from app.services.rag import resolve_top_k, run_retrieval_pipeline
 from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.query_log import record_chat_turn_query_log
 from app.services.rate_limits import enforce_org_query_limits
-from app.services.storage import cleanup_temp_extraction_file
+from app.services.storage import cleanup_temp_extraction_file, delete_storage_uri
 from app.services.workspace_access import resolve_workspace_for_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+
+
 def _source_type_for_upload_filename(filename: str) -> str:
     name = filename.lower()
     return "pdf-upload" if name.endswith(".pdf") else "file-upload"
@@ -121,16 +125,16 @@ def _require_session_for_user(db: Session, session_id: UUID, user: User) -> Chat
         raise HTTPException(status_code=404, detail="Chat session not found")
     if _is_org_owner(db, session.organization_id, user.id):
         return session
-    session = (
-        db.query(ChatSession)
-        .join(Workspace, Workspace.id == ChatSession.workspace_id)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .filter(ChatSession.id == session_id, WorkspaceMember.user_id == user.id)
+    if session.user_id is not None and session.user_id == user.id:
+        return session
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.workspace_id == session.workspace_id, WorkspaceMember.user_id == user.id)
         .one_or_none()
     )
-    if session is None:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    return session
+    if membership is not None and membership.role == WorkspaceMemberRole.workspace_admin.value:
+        return session
+    raise HTTPException(status_code=404, detail="Chat session not found")
 
 
 def _serialize_session(session: ChatSession) -> ChatSessionPublic:
@@ -381,101 +385,112 @@ async def upload_document_from_chat(
 
     stored = await persist_upload_file(file, settings.document_storage_root, workspace_id)
     upload_name = (file.filename or "document").strip() or "document"
+    committed = False
     try:
-        pages = extract_pages_from_upload(stored.extraction_path, upload_name)
-    finally:
-        cleanup_temp_extraction_file(stored.extraction_path, stored.storage_path)
-    if not pages:
-        raise HTTPException(
-            status_code=422,
-            detail="No extractable text found in this file. Check that the document is not empty or image-only.",
-        )
-
-    chunks = build_chunks(pages)
-    if not chunks:
-        raise HTTPException(status_code=422, detail="No chunks could be created from extracted text")
-
-    try:
-        embeddings = get_embedding_client().embed_texts_batched([chunk.content for chunk in chunks])
-    except EmbeddingServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Embedding service unavailable: {exc}",
-        ) from exc
-
-    ingestion_job = IngestionJob(
-        organization_id=workspace.organization_id,
-        workspace_id=workspace.id,
-        created_by=user.id,
-        status=IngestionJobStatus.completed.value,
-        source_filename=upload_name,
-    )
-    db.add(ingestion_job)
-    db.flush()
-
-    src_label = _source_type_for_upload_filename(upload_name)
-    document = Document(
-        organization_id=workspace.organization_id,
-        workspace_id=workspace.id,
-        ingestion_job_id=ingestion_job.id,
-        created_by=user.id,
-        filename=upload_name,
-        content_type=_content_type_for_upload(upload_name, file.content_type),
-        storage_path=stored.storage_path,
-        storage_provider=stored.storage_provider,
-        storage_bucket=stored.storage_bucket,
-        storage_key=stored.storage_key,
-        storage_size_bytes=stored.size_bytes,
-        storage_etag=stored.storage_etag,
-        checksum_sha256=stored.checksum_sha256,
-        source_type=src_label,
-        status=DocumentStatus.indexed.value,
-        page_count=len(pages),
-        last_indexed_at=utcnow(),
-    )
-    db.add(document)
-    db.flush()
-    document.external_id = str(document.id)
-
-    for chunk, embedding in zip(chunks, embeddings, strict=True):
-        db.add(
-            DocumentChunk(
-                document_id=document.id,
-                chunk_index=chunk.chunk_index,
-                page_number=chunk.page_number,
-                section_title=chunk.section_title,
-                content=chunk.content,
-                token_count=chunk.char_count,
-                embedding_model=settings.embedding_model,
-                embedding=embedding,
+        try:
+            pages = extract_pages_from_upload(stored.extraction_path, upload_name)
+        finally:
+            cleanup_temp_extraction_file(stored.extraction_path, stored.storage_path)
+        if not pages:
+            raise HTTPException(
+                status_code=422,
+                detail="No extractable text found in this file. Check that the document is not empty or image-only.",
             )
+
+        chunks = build_chunks(pages)
+        if not chunks:
+            raise HTTPException(status_code=422, detail="No chunks could be created from extracted text")
+
+        try:
+            embeddings = get_embedding_client().embed_texts_batched([chunk.content for chunk in chunks])
+        except EmbeddingServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Embedding service unavailable: {exc}",
+            ) from exc
+
+        ingestion_job = IngestionJob(
+            organization_id=workspace.organization_id,
+            workspace_id=workspace.id,
+            created_by=user.id,
+            status=IngestionJobStatus.completed.value,
+            source_filename=upload_name,
         )
+        db.add(ingestion_job)
+        db.flush()
 
-    ensure_upload_permission_row(db, document=document)
-    db.commit()
+        src_label = _source_type_for_upload_filename(upload_name)
+        document = Document(
+            organization_id=workspace.organization_id,
+            workspace_id=workspace.id,
+            ingestion_job_id=ingestion_job.id,
+            created_by=user.id,
+            filename=upload_name,
+            content_type=_content_type_for_upload(upload_name, file.content_type),
+            storage_path=stored.storage_path,
+            storage_provider=stored.storage_provider,
+            storage_bucket=stored.storage_bucket,
+            storage_key=stored.storage_key,
+            storage_size_bytes=stored.size_bytes,
+            storage_etag=stored.storage_etag,
+            checksum_sha256=stored.checksum_sha256,
+            source_type=src_label,
+            status=DocumentStatus.indexed.value,
+            page_count=len(pages),
+            last_indexed_at=utcnow(),
+        )
+        db.add(document)
+        db.flush()
+        document.external_id = str(document.id)
 
-    preview_limit = 6
-    return DocumentIngestionResponse(
-        ingestion_job_id=ingestion_job.id,
-        document_id=document.id,
-        organization_id=document.organization_id,
-        workspace_id=document.workspace_id,
-        filename=document.filename,
-        status=document.status,
-        page_count=document.page_count or 0,
-        chunk_count=len(chunks),
-        checksum_sha256=stored.checksum_sha256,
-        storage_path=stored.storage_path,
-        chunks=[
-            DocumentChunkPublic(
-                chunk_index=chunk.chunk_index,
-                page_number=chunk.page_number,
-                char_count=chunk.char_count,
-                content_preview=(chunk.content[:160] + "...") if len(chunk.content) > 160 else chunk.content,
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            db.add(
+                DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=chunk.chunk_index,
+                    page_number=chunk.page_number,
+                    section_title=chunk.section_title,
+                    content=chunk.content,
+                    token_count=chunk.char_count,
+                    embedding_model=settings.embedding_model,
+                    embedding=embedding,
+                )
             )
-            for chunk in chunks[:preview_limit]
-        ],
-    )
+
+        ensure_upload_permission_row(db, document=document)
+        db.commit()
+        committed = True
+
+        preview_limit = 6
+        return DocumentIngestionResponse(
+            ingestion_job_id=ingestion_job.id,
+            document_id=document.id,
+            organization_id=document.organization_id,
+            workspace_id=document.workspace_id,
+            filename=document.filename,
+            status=document.status,
+            page_count=document.page_count or 0,
+            chunk_count=len(chunks),
+            checksum_sha256=stored.checksum_sha256,
+            storage_path=stored.storage_path,
+            chunks=[
+                DocumentChunkPublic(
+                    chunk_index=chunk.chunk_index,
+                    page_number=chunk.page_number,
+                    char_count=chunk.char_count,
+                    content_preview=(chunk.content[:160] + "...") if len(chunk.content) > 160 else chunk.content,
+                )
+                for chunk in chunks[:preview_limit]
+            ],
+        )
+    except Exception:
+        if not committed:
+            db.rollback()
+            try:
+                delete_storage_uri(stored.storage_path)
+            except Exception as cleanup_exc:
+                logger.warning("Could not delete failed chat upload artifact %s: %s", stored.storage_path, cleanup_exc)
+        raise
 
 
 @router.put("/messages/{message_id}/feedback", response_model=ChatMessagePublic)
