@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -57,7 +58,7 @@ class BackfillStorageMetadataTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         self.tmp.cleanup()
 
-    def _seed_document(self, storage_path: Path) -> tuple[str, str]:
+    def _seed_document(self, storage_path: Path) -> tuple[UUID, str]:
         db = self.SessionLocal()
         try:
             org = Organization(
@@ -83,11 +84,11 @@ class BackfillStorageMetadataTests(unittest.TestCase):
             )
             db.add(document)
             db.commit()
-            return str(document.id), str(document.storage_path)
+            return document.id, str(document.storage_path)
         finally:
             db.close()
 
-    def _get_document(self, document_id: str) -> Document:
+    def _get_document(self, document_id: UUID) -> Document:
         db = self.SessionLocal()
         try:
             document = db.get(Document, document_id)
