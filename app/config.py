@@ -95,6 +95,12 @@ class Settings(BaseSettings):
         le=100,
         description="Max jobs processed in one poll tick by connector sync worker.",
     )
+    connector_sync_job_stale_after_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Seconds before a running connector sync job is considered abandoned and requeued.",
+    )
     privileged_read_api_per_hour: int = Field(
         default=1000,
         ge=1,
