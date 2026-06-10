@@ -104,6 +104,7 @@ In Clerk Dashboard → **Sessions** → **Customize session token**, add JSON su
 | `PRIVILEGED_READ_API_PER_HOUR` | `1000` | Per-user cap for privileged read APIs (UTC hourly bucket). |
 | `CONNECTOR_SYNC_WORKER_POLL_SECONDS` | `2` | Queue poll interval for connector sync worker. |
 | `CONNECTOR_SYNC_WORKER_MAX_JOBS_PER_TICK` | `1` | Max connector sync jobs processed per poll cycle per worker process. |
+| `CONNECTOR_SYNC_JOB_STALE_AFTER_SECONDS` | `3600` | Requeue running connector sync jobs that exceed the worker lease. |
 
 ---
 

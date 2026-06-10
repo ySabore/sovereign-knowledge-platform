@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import ConnectorSyncJob, IntegrationConnector, Organization, Workspace, utcnow
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured
@@ -22,6 +25,7 @@ SYNC_JOB_QUEUED = "queued"
 SYNC_JOB_RUNNING = "running"
 SYNC_JOB_COMPLETED = "completed"
 SYNC_JOB_FAILED = "failed"
+_WORKSPACE_UNSET = object()
 
 
 @dataclass(slots=True)
@@ -216,6 +220,41 @@ def get_active_sync_job(
     return q.order_by(ConnectorSyncJob.created_at.desc()).first()
 
 
+def recover_stale_connector_sync_jobs(
+    db: Session,
+    *,
+    connector_id: UUID | None = None,
+    workspace_id: UUID | None | object = _WORKSPACE_UNSET,
+) -> int:
+    """Requeue jobs abandoned by a worker crash so future syncs are not blocked forever."""
+    now = utcnow()
+    cutoff = now - timedelta(seconds=int(settings.connector_sync_job_stale_after_seconds))
+    q = db.query(ConnectorSyncJob).filter(
+        ConnectorSyncJob.status == SYNC_JOB_RUNNING,
+        or_(ConnectorSyncJob.started_at.is_(None), ConnectorSyncJob.started_at < cutoff),
+    )
+    if connector_id is not None:
+        q = q.filter(ConnectorSyncJob.connector_id == connector_id)
+    if workspace_id is None:
+        q = q.filter(ConnectorSyncJob.workspace_id.is_(None))
+    elif workspace_id is not _WORKSPACE_UNSET:
+        q = q.filter(ConnectorSyncJob.workspace_id == workspace_id)
+
+    count = q.update(
+        {
+            ConnectorSyncJob.status: SYNC_JOB_QUEUED,
+            ConnectorSyncJob.started_at: None,
+            ConnectorSyncJob.finished_at: None,
+            ConnectorSyncJob.error_message: "Requeued after connector sync worker lease expired.",
+            ConnectorSyncJob.updated_at: now,
+        },
+        synchronize_session=False,
+    )
+    if count:
+        db.commit()
+    return int(count or 0)
+
+
 def enqueue_connector_sync_job(
     db: Session,
     *,
@@ -225,6 +264,7 @@ def enqueue_connector_sync_job(
     requested_by_user_id: UUID | None,
     full_sync: bool,
 ) -> tuple[ConnectorSyncJob, bool]:
+    recover_stale_connector_sync_jobs(db, connector_id=connector_id, workspace_id=workspace_id)
     existing = get_active_sync_job(db, connector_id=connector_id, workspace_id=workspace_id)
     if existing is not None:
         return existing, False
@@ -293,6 +333,7 @@ def run_connector_sync_job(db: Session, job_id: UUID, *, claimed: bool = False) 
 
 def claim_next_connector_sync_job(db: Session) -> ConnectorSyncJob | None:
     """Atomically claim the oldest queued job using row locking."""
+    recover_stale_connector_sync_jobs(db)
     row = (
         db.query(ConnectorSyncJob)
         .filter(ConnectorSyncJob.status == SYNC_JOB_QUEUED)
