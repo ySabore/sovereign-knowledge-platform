@@ -21,6 +21,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
             scanned += 1
             parsed = parse_storage_uri(doc.storage_path)
             changed = False
+            uploaded_local_path: Path | None = None
+            uploaded_storage_uri: str | None = None
 
             if doc.storage_provider != parsed.provider:
                 doc.storage_provider = parsed.provider
@@ -45,29 +47,42 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
             if should_migrate:
                 local_path = Path(doc.storage_path)
                 if local_path.is_file():
-                    stored = backend.store_upload(
-                        local_path=local_path,
-                        workspace_id=doc.workspace_id,
-                        safe_name=Path(doc.filename or "document").name,
-                        checksum_sha256=doc.checksum_sha256 or "",
-                        size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
-                    )
-                    doc.storage_path = stored.storage_uri
-                    doc.storage_provider = stored.provider
-                    doc.storage_bucket = stored.bucket
-                    doc.storage_key = stored.key
-                    doc.storage_etag = stored.etag
-                    doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
+                    if apply_changes:
+                        stored = backend.store_upload(
+                            local_path=local_path,
+                            workspace_id=doc.workspace_id,
+                            safe_name=Path(doc.filename or "document").name,
+                            checksum_sha256=doc.checksum_sha256 or "",
+                            size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
+                        )
+                        doc.storage_path = stored.storage_uri
+                        doc.storage_provider = stored.provider
+                        doc.storage_bucket = stored.bucket
+                        doc.storage_key = stored.key
+                        doc.storage_etag = stored.etag
+                        doc.storage_size_bytes = stored.size_bytes
+                        uploaded_local_path = local_path
+                        uploaded_storage_uri = stored.storage_uri
                     changed = True
 
             if changed:
                 updated += 1
-                if not apply_changes:
+                if apply_changes:
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                        if uploaded_storage_uri:
+                            try:
+                                backend.delete_by_uri(uploaded_storage_uri)
+                            except Exception:
+                                pass
+                        raise
+                    if uploaded_local_path:
+                        uploaded_local_path.unlink(missing_ok=True)
+                else:
                     db.rollback()
                     db.expire_all()
-        if apply_changes:
-            db.commit()
     finally:
         db.close()
     return scanned, updated
