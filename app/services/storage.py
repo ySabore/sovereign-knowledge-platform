@@ -147,6 +147,15 @@ def get_storage_backend() -> BaseStorage:
     return LocalFileStorage(settings.document_storage_root)
 
 
+def delete_storage_uri(storage_uri: str) -> None:
+    parsed = parse_storage_uri(storage_uri)
+    if parsed.provider == "s3":
+        S3Storage().delete_by_uri(storage_uri)
+        return
+    if parsed.provider == "local":
+        LocalFileStorage(settings.document_storage_root).delete_by_uri(storage_uri)
+
+
 def cleanup_temp_extraction_file(extraction_path: str, storage_uri: str) -> None:
     if not extraction_path:
         return

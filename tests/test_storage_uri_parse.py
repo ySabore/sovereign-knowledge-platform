@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
 
-from app.services.storage import parse_storage_uri
+from app.services.storage import delete_storage_uri, parse_storage_uri
 
 
 class StorageUriParseTests(unittest.TestCase):
@@ -23,6 +26,31 @@ class StorageUriParseTests(unittest.TestCase):
         self.assertIsNone(parsed.provider)
         self.assertIsNone(parsed.bucket)
         self.assertIsNone(parsed.key)
+
+    def test_delete_storage_uri_dispatches_local_without_current_backend(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "artifact.txt"
+            path.write_text("content", encoding="utf-8")
+
+            with mock.patch("app.services.storage.S3Storage", side_effect=AssertionError("wrong backend")):
+                delete_storage_uri(str(path))
+
+            self.assertFalse(path.exists())
+
+    def test_delete_storage_uri_dispatches_s3_by_uri_scheme(self) -> None:
+        deleted: list[str] = []
+
+        class FakeS3Storage:
+            def delete_by_uri(self, storage_uri: str) -> None:
+                deleted.append(storage_uri)
+
+        with mock.patch("app.services.storage.S3Storage", FakeS3Storage), mock.patch(
+            "app.services.storage.LocalFileStorage"
+        ) as local_storage:
+            delete_storage_uri("s3://my-bucket/a/b/file.pdf")
+
+        self.assertEqual(deleted, ["s3://my-bucket/a/b/file.pdf"])
+        local_storage.assert_not_called()
 
 
 if __name__ == "__main__":
