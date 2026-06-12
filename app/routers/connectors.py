@@ -487,6 +487,7 @@ def assign_connector_to_workspace(
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
     _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     scoped_ids: list[UUID] = []
     for wid in _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {}):
         try:
@@ -663,6 +664,7 @@ def sync_connector_now(
     conn = db.get(IntegrationConnector, connector_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    _require_connector_enabled_for_org(db, conn.organization_id, conn.connector_type)
     if workspace_id is not None:
         _require_workspace_connector_manage_access(db, conn.organization_id, workspace_id, user)
         scoped_ids = _workspace_config_ids(conn.config if isinstance(conn.config, dict) else {})
@@ -675,6 +677,11 @@ def sync_connector_now(
             _require_google_drive_workspace_scope(conn, workspace_id)
     else:
         _require_connector_manage_access(db, conn.organization_id, user)
+        if conn.connector_type == "google-drive":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Google Drive sync requires a workspace_id so folder scope can be enforced.",
+            )
     enforce_connector_sync_limit(request, db, conn.organization_id, user)
     job, created = enqueue_connector_sync_job(
         db,
