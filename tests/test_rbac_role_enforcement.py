@@ -289,6 +289,37 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         body = resp.json()
         self.assertIn(str(self.workspace_id), body.get("workspace_ids", []))
 
+    def test_workspace_admin_cannot_assign_disallowed_connector(self) -> None:
+        db = self.SessionLocal()
+        try:
+            org = db.get(Organization, self.org_id)
+            self.assertIsNotNone(org)
+            org.allowed_connector_ids = ["google-drive"]
+            notion = IntegrationConnector(
+                organization_id=self.org_id,
+                connector_type="notion",
+                nango_connection_id="conn-rbac-notion",
+                status="active",
+                config={
+                    "workspace_id": str(self.workspace_unassigned_id),
+                    "workspace_ids": [str(self.workspace_unassigned_id)],
+                },
+            )
+            db.add(notion)
+            db.commit()
+            db.refresh(notion)
+            notion_id = notion.id
+        finally:
+            db.close()
+
+        headers = self._login("ws-admin-rbac@example.com")
+        resp = self.client.put(
+            f"/connectors/{notion_id}/workspaces/{self.workspace_id}",
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("not enabled for the organization", resp.text)
+
     def test_workspace_admin_cannot_remove_connector_from_unmanaged_workspace(self) -> None:
         headers = self._login("ws-admin-rbac@example.com")
         resp = self.client.delete(
@@ -377,6 +408,40 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_sync_rejects_disallowed_org_connector(self) -> None:
+        db = self.SessionLocal()
+        try:
+            org = db.get(Organization, self.org_id)
+            self.assertIsNotNone(org)
+            org.allowed_connector_ids = ["google-drive"]
+            notion = IntegrationConnector(
+                organization_id=self.org_id,
+                connector_type="notion",
+                nango_connection_id="conn-rbac-notion-sync",
+                status="active",
+                config={
+                    "workspace_id": str(self.workspace_id),
+                    "workspace_ids": [str(self.workspace_id)],
+                },
+            )
+            db.add(notion)
+            db.commit()
+            db.refresh(notion)
+            notion_id = notion.id
+        finally:
+            db.close()
+
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(f"/connectors/{notion_id}/sync", headers=headers)
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("not enabled for the organization", resp.text)
+
+    def test_google_drive_org_level_sync_requires_workspace_id(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(f"/connectors/{self.connector.id}/sync", headers=headers)
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertIn("requires a workspace_id", resp.text)
 
 
 if __name__ == "__main__":
