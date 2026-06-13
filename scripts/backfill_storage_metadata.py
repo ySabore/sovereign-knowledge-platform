@@ -42,32 +42,36 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                 and parsed.provider == "local"
                 and getattr(backend, "__class__", type(backend)).__name__ == "S3Storage"
             )
+            migrated_local_path: Path | None = None
             if should_migrate:
                 local_path = Path(doc.storage_path)
                 if local_path.is_file():
-                    stored = backend.store_upload(
-                        local_path=local_path,
-                        workspace_id=doc.workspace_id,
-                        safe_name=Path(doc.filename or "document").name,
-                        checksum_sha256=doc.checksum_sha256 or "",
-                        size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
-                    )
-                    doc.storage_path = stored.storage_uri
-                    doc.storage_provider = stored.provider
-                    doc.storage_bucket = stored.bucket
-                    doc.storage_key = stored.key
-                    doc.storage_etag = stored.etag
-                    doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
                     changed = True
+                    if apply_changes:
+                        stored = backend.store_upload(
+                            local_path=local_path,
+                            workspace_id=doc.workspace_id,
+                            safe_name=Path(doc.filename or "document").name,
+                            checksum_sha256=doc.checksum_sha256 or "",
+                            size_bytes=int(doc.storage_size_bytes or local_path.stat().st_size),
+                        )
+                        doc.storage_path = stored.storage_uri
+                        doc.storage_provider = stored.provider
+                        doc.storage_bucket = stored.bucket
+                        doc.storage_key = stored.key
+                        doc.storage_etag = stored.etag
+                        doc.storage_size_bytes = stored.size_bytes
+                        migrated_local_path = local_path
 
             if changed:
                 updated += 1
-                if not apply_changes:
+                if apply_changes:
+                    db.commit()
+                    if migrated_local_path is not None:
+                        migrated_local_path.unlink(missing_ok=True)
+                else:
                     db.rollback()
                     db.expire_all()
-        if apply_changes:
-            db.commit()
     finally:
         db.close()
     return scanned, updated
@@ -82,6 +86,8 @@ def main() -> None:
         help="When STORAGE_BACKEND=s3, upload local filesystem artifacts to S3 and rewrite storage_path.",
     )
     args = parser.parse_args()
+    if args.upload_local_to_s3 and not args.apply:
+        parser.error("--upload-local-to-s3 performs artifact migration and requires --apply")
     scanned, updated = backfill(apply_changes=bool(args.apply), upload_local_to_s3=bool(args.upload_local_to_s3))
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"[{mode}] scanned={scanned} updated={updated}")

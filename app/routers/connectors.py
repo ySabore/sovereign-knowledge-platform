@@ -736,7 +736,16 @@ def sync_connector_permissions(
     if not body.items:
         return {"updated": 0}
     org_id = body.items[0].organization_id
+    if any(item.organization_id != org_id for item in body.items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission sync items must target one organization",
+        )
     _require_connector_manage_access(db, org_id, user)
     raw = [item.model_dump(mode="json") for item in body.items]
-    n = sync_permissions(db, body.connector_id, raw)
+    try:
+        n = sync_permissions(db, body.connector_id, raw, organization_id=org_id)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {"updated": n, "connector_id": body.connector_id}

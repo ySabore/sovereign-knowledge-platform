@@ -170,6 +170,8 @@ def sync_permissions(
     db: Session,
     connector_id: str,
     items: list[dict],
+    *,
+    organization_id: UUID | None = None,
 ) -> int:
     """
     Upsert `DocumentPermission` rows from a connector sync.
@@ -177,38 +179,66 @@ def sync_permissions(
     Each item: document_id (UUID str), organization_id (UUID str), user_id (optional UUID str),
     can_read (bool), source (str), external_id (str).
     """
-    count = 0
+    authorized_org_id = UUID(str(organization_id)) if organization_id is not None else None
+    parsed_items: list[dict] = []
+    document_ids: list[UUID] = []
     for raw in items:
         document_id = UUID(str(raw["document_id"]))
-        organization_id = UUID(str(raw["organization_id"]))
+        item_org_id = UUID(str(raw["organization_id"]))
+        if authorized_org_id is not None and item_org_id != authorized_org_id:
+            raise ValueError("Permission sync items must target the authorized organization")
         user_id = UUID(str(raw["user_id"])) if raw.get("user_id") else None
         can_read = bool(raw.get("can_read", True))
         source = str(raw["source"])
         external_id = str(raw["external_id"])
+        parsed_items.append(
+            {
+                "document_id": document_id,
+                "organization_id": item_org_id,
+                "user_id": user_id,
+                "can_read": can_read,
+                "source": source,
+                "external_id": external_id,
+            }
+        )
+        document_ids.append(document_id)
 
+    documents = {
+        doc.id: doc
+        for doc in db.scalars(select(Document).where(Document.id.in_(document_ids))).all()
+    }
+    for item in parsed_items:
+        doc = documents.get(item["document_id"])
+        if doc is None:
+            raise ValueError("Permission sync referenced an unknown document")
+        if doc.organization_id != item["organization_id"]:
+            raise ValueError("Permission sync document organization mismatch")
+
+    count = 0
+    for item in parsed_items:
         existing = (
             db.query(DocumentPermission)
             .filter(
-                DocumentPermission.document_id == document_id,
-                DocumentPermission.source == source,
-                DocumentPermission.external_id == external_id,
+                DocumentPermission.document_id == item["document_id"],
+                DocumentPermission.source == item["source"],
+                DocumentPermission.external_id == item["external_id"],
             )
             .one_or_none()
         )
         if existing:
-            existing.organization_id = organization_id
-            existing.user_id = user_id
-            existing.can_read = can_read
+            existing.organization_id = item["organization_id"]
+            existing.user_id = item["user_id"]
+            existing.can_read = item["can_read"]
             existing.connector_id = connector_id
         else:
             db.add(
                 DocumentPermission(
-                    document_id=document_id,
-                    organization_id=organization_id,
-                    user_id=user_id,
-                    can_read=can_read,
-                    source=source,
-                    external_id=external_id,
+                    document_id=item["document_id"],
+                    organization_id=item["organization_id"],
+                    user_id=item["user_id"],
+                    can_read=item["can_read"],
+                    source=item["source"],
+                    external_id=item["external_id"],
                     connector_id=connector_id,
                 )
             )
