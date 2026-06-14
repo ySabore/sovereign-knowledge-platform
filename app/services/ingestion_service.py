@@ -113,8 +113,6 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
             db.flush()
             document.ingestion_job_id = job.id
 
-    _delete_chunks_for_document(db, document.id)
-
     chunks = build_chunks_from_plain_text(params.content)
     if not chunks:
         document.status = DocumentStatus.failed.value
@@ -128,8 +126,16 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
         document.status = DocumentStatus.failed.value
         db.commit()
         raise
+    if len(embeddings) != len(chunks):
+        document.status = DocumentStatus.failed.value
+        db.commit()
+        raise EmbeddingServiceError(
+            f"Embedding count mismatch: expected {len(chunks)}, got {len(embeddings)}"
+        )
 
-    for ch, emb in zip(chunks, embeddings, strict=True):
+    _delete_chunks_for_document(db, document.id)
+
+    for ch, emb in zip(chunks, embeddings):
         db.add(
             DocumentChunk(
                 document_id=document.id,

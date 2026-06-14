@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
+from app.config import settings
 from app.models import ConnectorSyncJob, IntegrationConnector, Organization, Workspace, utcnow
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
 from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured
@@ -22,6 +24,7 @@ SYNC_JOB_QUEUED = "queued"
 SYNC_JOB_RUNNING = "running"
 SYNC_JOB_COMPLETED = "completed"
 SYNC_JOB_FAILED = "failed"
+STALE_SYNC_JOB_REQUEUE_MESSAGE = "Requeued after connector sync worker lease expired"
 
 
 @dataclass(slots=True)
@@ -205,15 +208,40 @@ def get_active_sync_job(
     connector_id: UUID,
     workspace_id: UUID | None,
 ) -> ConnectorSyncJob | None:
+    requeue_stale_connector_sync_jobs(db)
     q = db.query(ConnectorSyncJob).filter(
         ConnectorSyncJob.connector_id == connector_id,
         ConnectorSyncJob.status.in_([SYNC_JOB_QUEUED, SYNC_JOB_RUNNING]),
     )
-    if workspace_id is None:
-        q = q.filter(ConnectorSyncJob.workspace_id.is_(None))
-    else:
-        q = q.filter(ConnectorSyncJob.workspace_id == workspace_id)
+    # Connector documents are keyed by connector/source external IDs, not by sync scope.
+    # Running a workspace-scoped sync alongside an org-wide sync can interleave chunk
+    # replacement for the same document, so any active job for the connector blocks all scopes.
+    _ = workspace_id
     return q.order_by(ConnectorSyncJob.created_at.desc()).first()
+
+
+def requeue_stale_connector_sync_jobs(db: Session, *, stale_after_seconds: float | None = None) -> int:
+    seconds = float(
+        stale_after_seconds if stale_after_seconds is not None else settings.connector_sync_job_stale_after_seconds
+    )
+    cutoff = utcnow() - timedelta(seconds=seconds)
+    rows = (
+        db.query(ConnectorSyncJob)
+        .filter(
+            ConnectorSyncJob.status == SYNC_JOB_RUNNING,
+            ConnectorSyncJob.started_at.isnot(None),
+            ConnectorSyncJob.started_at < cutoff,
+        )
+        .all()
+    )
+    for row in rows:
+        row.status = SYNC_JOB_QUEUED
+        row.finished_at = None
+        row.error_message = STALE_SYNC_JOB_REQUEUE_MESSAGE
+    if rows:
+        logger.warning("requeued stale connector sync jobs: count=%s", len(rows))
+        db.commit()
+    return len(rows)
 
 
 def enqueue_connector_sync_job(
@@ -293,9 +321,20 @@ def run_connector_sync_job(db: Session, job_id: UUID, *, claimed: bool = False) 
 
 def claim_next_connector_sync_job(db: Session) -> ConnectorSyncJob | None:
     """Atomically claim the oldest queued job using row locking."""
+    requeue_stale_connector_sync_jobs(db)
+    running_job = aliased(ConnectorSyncJob)
+    running_same_connector = (
+        db.query(running_job.id)
+        .filter(
+            running_job.connector_id == ConnectorSyncJob.connector_id,
+            running_job.status == SYNC_JOB_RUNNING,
+        )
+        .exists()
+    )
     row = (
         db.query(ConnectorSyncJob)
         .filter(ConnectorSyncJob.status == SYNC_JOB_QUEUED)
+        .filter(~running_same_connector)
         .order_by(ConnectorSyncJob.created_at.asc())
         .with_for_update(skip_locked=True)
         .first()
