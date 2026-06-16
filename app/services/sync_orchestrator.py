@@ -147,11 +147,9 @@ def run_connector_sync(
             if not cursor:
                 break
             if batch_idx >= max_batches:
-                logger.warning(
-                    "connector sync stopped after max_batches=%s connector_id=%s",
-                    max_batches,
-                    connector_row_id,
-                )
+                fatal_error = f"connector sync exceeded max_batches={max_batches} before reaching the final page"
+                terminal_status = "error"
+                logger.warning("%s connector_id=%s", fatal_error, connector_row_id)
                 break
     except Exception as exc:
         logger.exception("connector sync failed: connector_id=%s", connector_row_id)

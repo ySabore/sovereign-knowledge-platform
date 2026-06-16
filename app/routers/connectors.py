@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import (
     AuditAction,
     ConnectorSyncJob,
+    Document,
     IntegrationConnector,
     Organization,
     OrganizationMembership,
@@ -235,10 +236,10 @@ def _update_workspace_drive_sync(
 
 def _initialize_workspace_drive_sync(cfg: dict[str, Any], *, workspace_id: UUID) -> None:
     ws_map = _workspace_settings_map(cfg)
-    ws_map[str(workspace_id)] = {
-        "drive_folder_ids": [],
-        "drive_include_subfolders": True,
-    }
+    scoped = dict(ws_map.get(str(workspace_id)) or {})
+    scoped.setdefault("drive_folder_ids", [])
+    scoped.setdefault("drive_include_subfolders", True)
+    ws_map[str(workspace_id)] = scoped
     cfg["workspace_settings"] = ws_map
 
 
@@ -375,6 +376,38 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector management requires workspace admin or higher")
 
 
+def _require_permission_sync_document_scope(
+    db: Session,
+    *,
+    org_id: UUID,
+    items: list[PermissionSyncItem],
+    user: User,
+) -> None:
+    for item in items:
+        if item.organization_id != org_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Permission items must target one organization")
+
+    document_ids = {item.document_id for item in items}
+    rows = db.query(Document).filter(Document.id.in_(document_ids)).all()
+    documents_by_id = {doc.id: doc for doc in rows}
+    if set(documents_by_id) != document_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission sync document not found")
+
+    for doc in documents_by_id.values():
+        if doc.organization_id != org_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Document is outside this organization")
+
+    if user.is_platform_owner or _org_membership_role(db, org_id, user.id) == OrgMembershipRole.org_owner.value:
+        return
+
+    for doc in documents_by_id.values():
+        if not _workspace_manage_allowed(db, doc.workspace_id, user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission sync requires workspace admin access for every target document",
+            )
+
+
 @router.post("/activate")
 @limiter.exempt
 def activate_connector(
@@ -430,6 +463,13 @@ def activate_connector(
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
                 merged = dict(existing.config or {})
+                if (
+                    integration_norm == "google-drive"
+                    and target_workspace_id
+                    and body.drive_folder_ids is None
+                    and body.drive_include_subfolders is None
+                ):
+                    cfg.pop("workspace_settings", None)
                 merged.update(cfg)
                 if target_workspace_id:
                     scoped_ids: list[UUID] = []
@@ -737,6 +777,7 @@ def sync_connector_permissions(
         return {"updated": 0}
     org_id = body.items[0].organization_id
     _require_connector_manage_access(db, org_id, user)
+    _require_permission_sync_document_scope(db, org_id=org_id, items=body.items, user=user)
     raw = [item.model_dump(mode="json") for item in body.items]
-    n = sync_permissions(db, body.connector_id, raw)
+    n = sync_permissions(db, body.connector_id, raw, expected_organization_id=org_id)
     return {"updated": n, "connector_id": body.connector_id}
