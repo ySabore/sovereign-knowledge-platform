@@ -333,6 +333,30 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+        reactivate = self.client.post(
+            "/connectors/activate",
+            json={
+                "integration_id": "google-drive",
+                "connection_id": "conn-rbac-1-refresh",
+                "organization_id": str(self.org_id),
+                "workspace_id": str(self.workspace_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(reactivate.status_code, 200, reactivate.text)
+
+        db = self.SessionLocal()
+        try:
+            conn = db.get(IntegrationConnector, self.connector.id)
+            self.assertIsNotNone(conn)
+            cfg = conn.config if isinstance(conn.config, dict) else {}
+            ws_cfg = cfg.get("workspace_settings", {}).get(str(self.workspace_id))
+            self.assertIsInstance(ws_cfg, dict)
+            self.assertEqual(ws_cfg.get("drive_folder_ids"), ["folderA", "folderB"])
+            self.assertFalse(bool(ws_cfg.get("drive_include_subfolders", True)))
+        finally:
+            db.close()
+
     def test_workspace_admin_cannot_patch_drive_scope_for_unmanaged_workspace(self) -> None:
         headers = self._login("ws-admin-rbac@example.com")
         resp = self.client.patch(
@@ -377,6 +401,48 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_workspace_admin_cannot_sync_permissions_for_unmanaged_workspace_document(self) -> None:
+        db = self.SessionLocal()
+        try:
+            unmanaged_doc = Document(
+                organization_id=self.org_id,
+                workspace_id=self.workspace_unassigned_id,
+                created_by=None,
+                filename="unmanaged.txt",
+                content_type="text/plain",
+                storage_path="",
+                source_type="google-drive",
+                external_id=str(uuid4()),
+                status="indexed",
+                page_count=1,
+                integration_connector_id=self.connector.id,
+            )
+            db.add(unmanaged_doc)
+            db.commit()
+            db.refresh(unmanaged_doc)
+            unmanaged_doc_id = unmanaged_doc.id
+        finally:
+            db.close()
+
+        headers = self._login("ws-admin-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/sync-permissions",
+            json={
+                "connector_id": str(self.connector.id),
+                "items": [
+                    {
+                        "document_id": str(unmanaged_doc_id),
+                        "organization_id": str(self.org_id),
+                        "can_read": True,
+                        "source": "google-drive",
+                        "external_id": "drive-file-1:user",
+                    }
+                ],
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 403, resp.text)
 
 
 if __name__ == "__main__":

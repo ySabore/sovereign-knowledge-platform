@@ -147,7 +147,8 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
     document.page_count = None
     document.last_indexed_at = utcnow()
 
-    if settings.rbac_mode.strip().lower() == "full":
+    connector_acl_arrives_separately = params.integration_connector_id is not None and params.permission_user_ids is None
+    if settings.rbac_mode.strip().lower() == "full" and not connector_acl_arrives_separately:
         apply_ingestion_acl(
             db,
             document=document,
