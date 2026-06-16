@@ -463,6 +463,13 @@ def activate_connector(
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
                 merged = dict(existing.config or {})
+                if (
+                    integration_norm == "google-drive"
+                    and target_workspace_id
+                    and body.drive_folder_ids is None
+                    and body.drive_include_subfolders is None
+                ):
+                    cfg.pop("workspace_settings", None)
                 merged.update(cfg)
                 if target_workspace_id:
                     scoped_ids: list[UUID] = []
