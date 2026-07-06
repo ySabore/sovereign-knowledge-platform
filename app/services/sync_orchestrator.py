@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ConnectorSyncJob, IntegrationConnector, Organization, Workspace, utcnow
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
-from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured
+from app.services.nango_client import DocumentFetchResult, fetch_documents, nango_configured, sanitize_drive_folder_ids
 
 logger = logging.getLogger(__name__)
 SYNC_JOB_QUEUED = "queued"
@@ -41,6 +41,34 @@ def _resolve_workspace_id(db: Session, org_id: UUID, cfg: dict[str, Any] | None)
     return ws.id if ws else None
 
 
+def _workspace_config_ids(cfg: dict[str, Any] | None) -> list[str]:
+    if not isinstance(cfg, dict):
+        return []
+    out: list[str] = []
+    raw = cfg.get("workspace_ids")
+    if isinstance(raw, list):
+        for v in raw:
+            s = str(v).strip()
+            if not s:
+                continue
+            try:
+                UUID(s)
+            except ValueError:
+                continue
+            if s not in out:
+                out.append(s)
+    legacy = cfg.get("workspace_id")
+    if legacy:
+        s = str(legacy).strip()
+        try:
+            UUID(s)
+        except ValueError:
+            s = ""
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
 def _workspace_effective_config(cfg: dict[str, Any], workspace_id: UUID) -> dict[str, Any]:
     merged = dict(cfg)
     raw = cfg.get("workspace_settings")
@@ -49,6 +77,10 @@ def _workspace_effective_config(cfg: dict[str, Any], workspace_id: UUID) -> dict
         if isinstance(ws_cfg, dict):
             merged.update(ws_cfg)
     return merged
+
+
+def _google_drive_folder_scope_configured(cfg: dict[str, Any]) -> bool:
+    return bool(sanitize_drive_folder_ids(cfg.get("drive_folder_ids")))
 
 
 def _ingest_fetch_result(
@@ -104,8 +136,13 @@ def run_connector_sync(
     ws = db.get(Workspace, workspace_id)
     if ws is None or ws.organization_id != org.id:
         return {"status": "error", "detail": "Workspace not found"}
+    scoped_workspace_ids = _workspace_config_ids(cfg)
+    if scoped_workspace_ids and str(workspace_id) not in scoped_workspace_ids:
+        return {"status": "error", "detail": "Connector is not enabled for this workspace"}
 
     effective_cfg = _workspace_effective_config(cfg, workspace_id)
+    if conn.connector_type == "google-drive" and not _google_drive_folder_scope_configured(effective_cfg):
+        return {"status": "error", "detail": "Google Drive folder scope is required before syncing this workspace."}
 
     if not nango_configured():
         return {"status": "skipped", "detail": "NANGO_SECRET_KEY not configured"}
