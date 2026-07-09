@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
 from pathlib import Path
 
 from sqlalchemy import select
@@ -14,6 +15,9 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
     scanned = 0
     updated = 0
     backend = get_storage_backend()
+    uploaded_uris: list[str] = []
+    local_paths_to_delete: list[Path] = []
+    committed = False
     db = SessionLocal()
     try:
         rows = db.scalars(select(Document).order_by(Document.created_at.asc())).all()
@@ -43,8 +47,15 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                 and getattr(backend, "__class__", type(backend)).__name__ == "S3Storage"
             )
             if should_migrate:
-                local_path = Path(doc.storage_path)
+                local_path = Path(doc.storage_path or "")
                 if local_path.is_file():
+                    if not apply_changes:
+                        changed = True
+                        if changed:
+                            updated += 1
+                            db.rollback()
+                            db.expire_all()
+                        continue
                     stored = backend.store_upload(
                         local_path=local_path,
                         workspace_id=doc.workspace_id,
@@ -58,7 +69,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     doc.storage_key = stored.key
                     doc.storage_etag = stored.etag
                     doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
+                    uploaded_uris.append(stored.storage_uri)
+                    local_paths_to_delete.append(local_path)
                     changed = True
 
             if changed:
@@ -68,6 +80,15 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     db.expire_all()
         if apply_changes:
             db.commit()
+            committed = True
+            for local_path in local_paths_to_delete:
+                local_path.unlink(missing_ok=True)
+    except Exception:
+        if apply_changes and not committed:
+            for storage_uri in uploaded_uris:
+                with suppress(Exception):
+                    backend.delete_by_uri(storage_uri)
+        raise
     finally:
         db.close()
     return scanned, updated
