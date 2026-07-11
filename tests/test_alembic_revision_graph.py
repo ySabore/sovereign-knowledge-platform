@@ -32,14 +32,11 @@ class AlembicRevisionGraphTest(unittest.TestCase):
             down_revision = _literal_assignment(module, "down_revision")
 
             self.assertIsInstance(revision, str, f"{path.name} has invalid revision {revision!r}")
-            self.assertNotIn(
-                revision,
-                revisions,
-                (
+            if revision in revisions:
+                self.fail(
                     f"Duplicate Alembic revision {revision!r}: "
                     f"{revisions[revision].name} and {path.name}"
-                ),
-            )
+                )
             revisions[revision] = path
             down_revisions[revision] = down_revision
 
