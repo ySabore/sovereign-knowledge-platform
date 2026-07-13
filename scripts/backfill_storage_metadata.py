@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from sqlalchemy import select
@@ -9,11 +10,15 @@ from app.database import SessionLocal
 from app.models import Document
 from app.services.storage import get_storage_backend, parse_storage_uri
 
+logger = logging.getLogger(__name__)
+
 
 def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int]:
     scanned = 0
     updated = 0
     backend = get_storage_backend()
+    local_paths_to_delete: list[Path] = []
+    uploaded_uris_to_cleanup: list[str] = []
     db = SessionLocal()
     try:
         rows = db.scalars(select(Document).order_by(Document.created_at.asc())).all()
@@ -38,7 +43,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     changed = True
 
             should_migrate = (
-                upload_local_to_s3
+                apply_changes
+                and upload_local_to_s3
                 and parsed.provider == "local"
                 and getattr(backend, "__class__", type(backend)).__name__ == "S3Storage"
             )
@@ -58,7 +64,8 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     doc.storage_key = stored.key
                     doc.storage_etag = stored.etag
                     doc.storage_size_bytes = stored.size_bytes
-                    local_path.unlink(missing_ok=True)
+                    local_paths_to_delete.append(local_path)
+                    uploaded_uris_to_cleanup.append(stored.storage_uri)
                     changed = True
 
             if changed:
@@ -67,7 +74,21 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
                     db.rollback()
                     db.expire_all()
         if apply_changes:
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                for storage_uri in uploaded_uris_to_cleanup:
+                    try:
+                        backend.delete_by_uri(storage_uri)
+                    except Exception as exc:
+                        logger.warning("Could not clean up uploaded artifact %s after failed commit: %s", storage_uri, exc)
+                raise
+            for local_path in local_paths_to_delete:
+                try:
+                    local_path.unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.warning("Could not delete migrated local artifact %s: %s", local_path, exc)
     finally:
         db.close()
     return scanned, updated
