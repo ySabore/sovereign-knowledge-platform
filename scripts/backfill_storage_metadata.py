@@ -44,7 +44,7 @@ def backfill(*, apply_changes: bool, upload_local_to_s3: bool) -> tuple[int, int
 
             should_migrate = (
                 apply_changes
-                upload_local_to_s3
+                and upload_local_to_s3
                 and parsed.provider == "local"
                 and getattr(backend, "__class__", type(backend)).__name__ == "S3Storage"
             )
