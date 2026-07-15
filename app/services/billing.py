@@ -464,16 +464,20 @@ def apply_subscription_object_to_org(db: Session, org: Organization, sub: dict[s
     if isinstance(cust, str):
         org.stripe_customer_id = cust
 
-    items = (sub.get("items") or {}).get("data", [])
-    if items:
-        price_id = items[0].get("price", {}).get("id")
-        mapped = price_id_to_plan(price_id or "")
-        if mapped:
-            org.plan = mapped
-
-    status = sub.get("status")
-    if status in ("canceled", "unpaid", "incomplete_expired"):
+    status = str(sub.get("status") or "").strip().lower()
+    if status in {"active", "trialing", "past_due"}:
+        items = (sub.get("items") or {}).get("data", [])
+        if items:
+            price_id = items[0].get("price", {}).get("id")
+            mapped = price_id_to_plan(price_id or "")
+            if mapped:
+                org.plan = mapped
+    else:
+        # Initial payments can remain incomplete while asynchronous payment
+        # methods settle. Never grant paid entitlements before activation.
         org.plan = "free"
+
+    if status in {"canceled", "unpaid", "incomplete_expired"}:
         org.stripe_subscription_id = None
 
     invalidate_plan_cache(org.id)
@@ -498,7 +502,17 @@ def handle_checkout_session_completed(db: Session, session: dict[str, Any]) -> N
         org.stripe_customer_id = cust
 
     sub_id = session.get("subscription")
-    if isinstance(sub_id, str) and stripe_configured():
+    payment_status = str(session.get("payment_status") or "").strip().lower()
+    if isinstance(sub_id, str):
+        # Keep the pending subscription attached to the org so another
+        # checkout cannot create a duplicate while payment settles.
+        org.stripe_subscription_id = sub_id
+
+    if (
+        isinstance(sub_id, str)
+        and payment_status in {"paid", "no_payment_required"}
+        and stripe_configured()
+    ):
         _configure_stripe()
         import stripe
 
@@ -519,6 +533,7 @@ def handle_checkout_session_completed(db: Session, session: dict[str, Any]) -> N
             "checkout_session_id": session.get("id"),
             "stripe_customer_id": org.stripe_customer_id,
             "stripe_subscription_id": sub_id if isinstance(sub_id, str) else None,
+            "payment_status": payment_status or None,
             "plan_after": org.plan,
         },
     )
