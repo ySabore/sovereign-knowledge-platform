@@ -63,7 +63,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         obj = {}
 
     try:
-        if etype == "checkout.session.completed":
+        if etype in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
             handle_checkout_session_completed(db, obj)
         elif etype == "customer.subscription.updated":
             handle_subscription_updated(db, obj)

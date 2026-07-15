@@ -4,11 +4,14 @@ import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from app.services.billing import (
     DEFAULT_PLAN_PRICE_DISPLAY,
+    apply_subscription_object_to_org,
     create_checkout_session,
     get_plan_entitlements,
+    handle_checkout_session_completed,
     list_invoice_history,
     list_plan_catalog,
     normalize_plan_key,
@@ -16,6 +19,22 @@ from app.services.billing import (
 
 
 class BillingEntitlementsTests(unittest.TestCase):
+    class _FakeDb:
+        def __init__(self, org: SimpleNamespace) -> None:
+            self.org = org
+            self.committed = False
+            self.added: list[object] = []
+
+        def get(self, model, object_id):
+            _ = model
+            return self.org if object_id == self.org.id else None
+
+        def add(self, value: object) -> None:
+            self.added.append(value)
+
+        def commit(self) -> None:
+            self.committed = True
+
     def test_normalize_unknown_plan_maps_to_free(self) -> None:
         self.assertEqual(normalize_plan_key("unknown-xyz"), "free")
 
@@ -71,7 +90,8 @@ class BillingEntitlementsTests(unittest.TestCase):
         class FakeSub:
             @staticmethod
             def retrieve(sub_id: str):
-                self.assertEqual(sub_id, "sub_active_demo")
+                if sub_id != "sub_active_demo":
+                    raise AssertionError(f"unexpected subscription id: {sub_id}")
                 return {"id": sub_id, "status": "active"}
 
         fake_stripe = SimpleNamespace(Subscription=FakeSub)
@@ -93,6 +113,94 @@ class BillingEntitlementsTests(unittest.TestCase):
                     cancel_url="http://localhost/cancel",
                 )
         self.assertIn("already has an active Stripe subscription", str(ctx.exception))
+
+    def test_incomplete_subscription_does_not_grant_paid_entitlements(self) -> None:
+        org = SimpleNamespace(
+            id=uuid4(),
+            plan="free",
+            stripe_subscription_id=None,
+            stripe_customer_id=None,
+        )
+        subscription = {
+            "id": "sub_pending",
+            "customer": "cus_pending",
+            "status": "incomplete",
+            "items": {"data": [{"price": {"id": "price_business"}}]},
+        }
+
+        with patch("app.services.billing.price_id_to_plan", return_value="business"), patch(
+            "app.services.billing.invalidate_plan_cache"
+        ):
+            apply_subscription_object_to_org(None, org, subscription)  # type: ignore[arg-type]
+
+        self.assertEqual(org.plan, "free")
+        self.assertEqual(org.stripe_subscription_id, "sub_pending")
+        self.assertEqual(org.stripe_customer_id, "cus_pending")
+
+    def test_unpaid_checkout_keeps_plan_free_without_retrieving_subscription(self) -> None:
+        org = SimpleNamespace(
+            id=uuid4(),
+            plan="free",
+            stripe_subscription_id=None,
+            stripe_customer_id=None,
+        )
+        db = self._FakeDb(org)
+        session = {
+            "id": "cs_pending",
+            "customer": "cus_pending",
+            "subscription": "sub_pending",
+            "payment_status": "unpaid",
+            "metadata": {"organization_id": str(org.id)},
+        }
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing.invalidate_plan_cache"
+        ), patch("app.services.billing._configure_stripe") as configure:
+            handle_checkout_session_completed(db, session)  # type: ignore[arg-type]
+
+        configure.assert_not_called()
+        self.assertEqual(org.plan, "free")
+        self.assertEqual(org.stripe_subscription_id, "sub_pending")
+        self.assertEqual(org.stripe_customer_id, "cus_pending")
+        self.assertTrue(db.committed)
+
+    def test_paid_checkout_grants_active_subscription_plan(self) -> None:
+        class FakeSub:
+            @staticmethod
+            def retrieve(sub_id: str):
+                return {
+                    "id": sub_id,
+                    "customer": "cus_paid",
+                    "status": "active",
+                    "items": {"data": [{"price": {"id": "price_business"}}]},
+                }
+
+        fake_stripe = SimpleNamespace(Subscription=FakeSub)
+        org = SimpleNamespace(
+            id=uuid4(),
+            plan="free",
+            stripe_subscription_id=None,
+            stripe_customer_id=None,
+        )
+        db = self._FakeDb(org)
+        session = {
+            "id": "cs_paid",
+            "customer": "cus_paid",
+            "subscription": "sub_paid",
+            "payment_status": "paid",
+            "metadata": {"organization_id": str(org.id)},
+        }
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch("app.services.billing.price_id_to_plan", return_value="business"), patch(
+            "app.services.billing.invalidate_plan_cache"
+        ), patch.dict(sys.modules, {"stripe": fake_stripe}):
+            handle_checkout_session_completed(db, session)  # type: ignore[arg-type]
+
+        self.assertEqual(org.plan, "business")
+        self.assertEqual(org.stripe_subscription_id, "sub_paid")
+        self.assertTrue(db.committed)
 
 
 if __name__ == "__main__":
