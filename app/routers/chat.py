@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.limiter import limiter
