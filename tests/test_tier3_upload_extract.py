@@ -94,6 +94,39 @@ def test_extract_eml_with_docx_attachment() -> None:
         assert "SVL-DOCX-ATT-101" in txt
 
 
+def test_extract_eml_binary_attachment_cannot_escape_temp_directory() -> None:
+    from docx import Document as DocxDocument
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        p = root / "path-traversal-attachment.eml"
+        escaped_path = root / "escaped.docx"
+
+        doc = DocxDocument()
+        doc.add_paragraph("Safe attachment body marker SVL-DOCX-ATT-102.")
+        buf = BytesIO()
+        doc.save(buf)
+
+        msg = EmailMessage()
+        msg["From"] = "sender@example.com"
+        msg["To"] = "receiver@example.com"
+        msg["Subject"] = "Attachment Path Safety"
+        msg.set_content("Body line for message.")
+        msg.add_attachment(
+            buf.getvalue(),
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=str(escaped_path),
+        )
+        p.write_bytes(msg.as_bytes())
+
+        pages = extract_pages_from_upload(str(p), p.name)
+
+        assert len(pages) == 1
+        assert "SVL-DOCX-ATT-102" in pages[0].text
+        assert not escaped_path.exists()
+
+
 def _tesseract_available() -> bool:
     try:
         import pytesseract

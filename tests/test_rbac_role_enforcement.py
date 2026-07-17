@@ -1,9 +1,11 @@
 import os
 import unittest
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -261,6 +263,21 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         headers = self._login("member-rbac@example.com")
         resp = self.client.get(f"/connectors/organization/{self.org_id}", headers=headers)
         self.assertEqual(resp.status_code, 403, resp.text)
+
+    def test_member_chat_upload_reaches_storage_configuration(self) -> None:
+        headers = self._login("member-rbac@example.com")
+        with patch(
+            "app.routers.chat.persist_upload_file",
+            new_callable=AsyncMock,
+            side_effect=HTTPException(status_code=418, detail="storage reached"),
+        ):
+            resp = self.client.post(
+                f"/chat/workspaces/{self.workspace_id}/upload",
+                headers=headers,
+                files={"file": ("note.txt", b"hello", "text/plain")},
+            )
+        self.assertEqual(resp.status_code, 418, resp.text)
+        self.assertEqual(resp.json()["detail"], "storage reached")
 
     def test_workspace_admin_audit_is_scoped_to_managed_workspaces(self) -> None:
         headers = self._login("ws-admin-rbac@example.com")

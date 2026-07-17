@@ -327,7 +327,7 @@ def _extract_attachment_text_from_bytes(*, filename: str, payload: bytes, conten
     Best-effort extraction for email attachments (text-first, bounded size).
     Also performs bounded recursive extraction for supported binary formats.
     """
-    name = (filename or "attachment").strip()
+    name = Path((filename or "attachment").strip()).name or "attachment"
     ext = Path(name).suffix.lower()
     if not payload or len(payload) > EMAIL_ATTACHMENT_MAX_BYTES:
         return None
