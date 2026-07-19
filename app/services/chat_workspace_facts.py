@@ -8,7 +8,8 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import ChatSession, Document, DocumentChunk, DocumentStatus, utcnow
+from app.models import ChatSession, Document, DocumentChunk, DocumentStatus, User, utcnow
+from app.services.permissions import get_accessible_document_ids
 
 WorkspaceFactMode = Literal["workspace_stats"]
 
@@ -45,10 +46,10 @@ def is_workspace_fact_query(query: str) -> bool:
     )
 
 
-def _document_counts(db: Session, workspace_id: UUID) -> dict[str, int]:
+def _document_counts(db: Session, workspace_id: UUID, document_ids: set[UUID]) -> dict[str, int]:
     rows = (
         db.query(Document.status, func.count(Document.id))
-        .filter(Document.workspace_id == workspace_id)
+        .filter(Document.workspace_id == workspace_id, Document.id.in_(document_ids))
         .group_by(Document.status)
         .all()
     )
@@ -62,21 +63,25 @@ def _document_counts(db: Session, workspace_id: UUID) -> dict[str, int]:
     return counts
 
 
-def _chunk_count(db: Session, workspace_id: UUID) -> int:
+def _chunk_count(db: Session, workspace_id: UUID, document_ids: set[UUID]) -> int:
     return int(
         db.query(func.count(DocumentChunk.id))
         .join(Document, Document.id == DocumentChunk.document_id)
-        .filter(Document.workspace_id == workspace_id)
+        .filter(Document.workspace_id == workspace_id, Document.id.in_(document_ids))
         .scalar()
         or 0
     )
 
 
-def _document_count_since(db: Session, workspace_id: UUID, *, days: int) -> int:
+def _document_count_since(db: Session, workspace_id: UUID, document_ids: set[UUID], *, days: int) -> int:
     since = utcnow() - timedelta(days=days)
     return int(
         db.query(func.count(Document.id))
-        .filter(Document.workspace_id == workspace_id, Document.created_at >= since)
+        .filter(
+            Document.workspace_id == workspace_id,
+            Document.id.in_(document_ids),
+            Document.created_at >= since,
+        )
         .scalar()
         or 0
     )
@@ -91,10 +96,10 @@ def _chat_count_for_user(db: Session, workspace_id: UUID, *, user_id: UUID) -> i
     )
 
 
-def _source_breakdown(db: Session, workspace_id: UUID) -> dict[str, int]:
+def _source_breakdown(db: Session, workspace_id: UUID, document_ids: set[UUID]) -> dict[str, int]:
     rows = (
         db.query(Document.source_type, func.count(Document.id))
-        .filter(Document.workspace_id == workspace_id)
+        .filter(Document.workspace_id == workspace_id, Document.id.in_(document_ids))
         .group_by(Document.source_type)
         .all()
     )
@@ -105,23 +110,34 @@ def _source_breakdown(db: Session, workspace_id: UUID) -> dict[str, int]:
 def _list_document_names(
     db: Session,
     workspace_id: UUID,
+    document_ids: set[UUID],
     *,
     status: str | None = None,
     limit: int = 10,
 ) -> list[str]:
-    query = db.query(Document.filename).filter(Document.workspace_id == workspace_id)
+    query = db.query(Document.filename).filter(
+        Document.workspace_id == workspace_id,
+        Document.id.in_(document_ids),
+    )
     if status:
         query = query.filter(Document.status == status)
     rows = query.order_by(Document.created_at.desc()).limit(limit).all()
     return [str(r[0]) for r in rows if r and r[0]]
 
 
-def _processing_stuck_count(db: Session, workspace_id: UUID, *, minutes: int = 30) -> int:
+def _processing_stuck_count(
+    db: Session,
+    workspace_id: UUID,
+    document_ids: set[UUID],
+    *,
+    minutes: int = 30,
+) -> int:
     threshold = utcnow() - timedelta(minutes=minutes)
     return int(
         db.query(func.count(Document.id))
         .filter(
             Document.workspace_id == workspace_id,
+            Document.id.in_(document_ids),
             Document.status == DocumentStatus.processing.value,
             Document.updated_at < threshold,
         )
@@ -145,12 +161,21 @@ def answer_workspace_fact_query(
     session: ChatSession,
     user_id: UUID,
     query: str,
+    *,
+    user: User | None = None,
 ) -> tuple[str, list[dict], WorkspaceFactMode] | None:
     q = _normalize_query(query)
     if not is_workspace_fact_query(q):
         return None
 
-    counts = _document_counts(db, session.workspace_id)
+    document_ids = get_accessible_document_ids(
+        db,
+        user_id=user_id,
+        organization_id=session.organization_id,
+        workspace_id=session.workspace_id,
+        user=user,
+    )
+    counts = _document_counts(db, session.workspace_id, document_ids)
     total = counts["total"]
     indexed = counts[DocumentStatus.indexed.value]
     processing = counts[DocumentStatus.processing.value]
@@ -180,33 +205,39 @@ def answer_workspace_fact_query(
         return (f"You currently have {count} conversations in this workspace.", [], "workspace_stats")
 
     if asks_time_today and asks_docs:
-        count = _document_count_since(db, session.workspace_id, days=1)
+        count = _document_count_since(db, session.workspace_id, document_ids, days=1)
         return (f"{count} documents were added in this workspace in the last 24 hours.", [], "workspace_stats")
     if asks_time_week and asks_docs:
-        count = _document_count_since(db, session.workspace_id, days=7)
+        count = _document_count_since(db, session.workspace_id, document_ids, days=7)
         return (f"{count} documents were added in this workspace in the last 7 days.", [], "workspace_stats")
     if asks_time_month and asks_docs:
-        count = _document_count_since(db, session.workspace_id, days=30)
+        count = _document_count_since(db, session.workspace_id, document_ids, days=30)
         return (f"{count} documents were added in this workspace in the last 30 days.", [], "workspace_stats")
 
     if asks_source_mix and asks_docs:
-        breakdown = _source_breakdown(db, session.workspace_id)
+        breakdown = _source_breakdown(db, session.workspace_id, document_ids)
         return (f"Source breakdown for this workspace: {_format_source_breakdown(breakdown)}.", [], "workspace_stats")
 
     if asks_failed_listing:
-        names = _list_document_names(db, session.workspace_id, status=DocumentStatus.failed.value, limit=10)
+        names = _list_document_names(
+            db,
+            session.workspace_id,
+            document_ids,
+            status=DocumentStatus.failed.value,
+            limit=10,
+        )
         if not names:
             return ("No failed documents currently in this workspace.", [], "workspace_stats")
         return (f"Failed documents: {', '.join(names)}.", [], "workspace_stats")
 
     if asks_newest and asks_docs:
-        names = _list_document_names(db, session.workspace_id, limit=10)
+        names = _list_document_names(db, session.workspace_id, document_ids, limit=10)
         if not names:
             return ("There are no documents in this workspace yet.", [], "workspace_stats")
         return (f"Newest documents in this workspace: {', '.join(names)}.", [], "workspace_stats")
 
     if asks_stuck and asks_docs:
-        stuck = _processing_stuck_count(db, session.workspace_id, minutes=30)
+        stuck = _processing_stuck_count(db, session.workspace_id, document_ids, minutes=30)
         return (
             f"{stuck} processing documents look stalled (no update for over 30 minutes) in this workspace.",
             [],
@@ -214,7 +245,7 @@ def answer_workspace_fact_query(
         )
 
     if asks_listing:
-        names = _list_document_names(db, session.workspace_id, limit=10)
+        names = _list_document_names(db, session.workspace_id, document_ids, limit=10)
         if not names:
             return ("There are no documents in this workspace yet.", [], "workspace_stats")
         extra = max(0, total - len(names))
@@ -223,7 +254,7 @@ def answer_workspace_fact_query(
         return (f"This workspace has {total} documents. Recent files: {listed}{suffix}.", [], "workspace_stats")
 
     if asks_chunks and _has_any(q, ("how many", "number of", "count")):
-        chunks = _chunk_count(db, session.workspace_id)
+        chunks = _chunk_count(db, session.workspace_id, document_ids)
         return (
             f"This workspace currently has {chunks} indexed chunks across {total} documents.",
             [],

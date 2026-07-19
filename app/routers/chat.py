@@ -536,7 +536,7 @@ def create_chat_message(
 
     from_fact = False
     try:
-        fact_answer = answer_workspace_fact_query(db, session, user.id, query)
+        fact_answer = answer_workspace_fact_query(db, session, user.id, query, user=user)
         if fact_answer is not None:
             answer_text, citations, generation_mode = fact_answer
             from_fact = True
