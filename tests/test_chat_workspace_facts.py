@@ -169,7 +169,7 @@ class WorkspaceFactPermissionTests(unittest.TestCase):
                     db,
                     chat_session,
                     user.id,
-                    "how many failed documents",
+                    "count of documents with errors",
                     user=user,
                 )
                 chunks = answer_workspace_fact_query(
