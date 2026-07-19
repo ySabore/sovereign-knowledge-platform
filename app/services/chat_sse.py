@@ -52,7 +52,7 @@ async def sse_chat_turn_lines(
         .count()
     )
 
-    fact_answer = answer_workspace_fact_query(db, session, user.id, query)
+    fact_answer = answer_workspace_fact_query(db, session, user.id, query, user=user)
     if fact_answer is not None:
         answer_text, citations, generation_mode = fact_answer
         assistant_message = ChatMessage(
