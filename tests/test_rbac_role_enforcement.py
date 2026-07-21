@@ -17,6 +17,7 @@ from app.models import (
     Document,
     IntegrationConnector,
     Organization,
+    OrganizationConnector,
     OrganizationMembership,
     OrgMembershipRole,
     OrgStatus,
@@ -377,6 +378,46 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403, resp.text)
         self.assertIn("not enabled for the organization", resp.text)
+
+    def test_activate_existing_connector_does_not_consume_another_plan_slot(self) -> None:
+        db = self.SessionLocal()
+        try:
+            db.add(
+                OrganizationConnector(
+                    organization_id=self.org_id,
+                    integration_key=self.connector.connector_type,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.post(
+            "/connectors/activate",
+            json={
+                "integration_id": self.connector.connector_type,
+                "connection_id": "conn-rbac-refreshed",
+                "organization_id": str(self.org_id),
+                "workspace_id": str(self.workspace_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+        db = self.SessionLocal()
+        try:
+            connector = db.get(IntegrationConnector, self.connector.id)
+            self.assertIsNotNone(connector)
+            self.assertEqual(connector.nango_connection_id, "conn-rbac-refreshed")
+            registrations = (
+                db.query(OrganizationConnector)
+                .filter(OrganizationConnector.organization_id == self.org_id)
+                .all()
+            )
+            self.assertEqual(len(registrations), 1)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

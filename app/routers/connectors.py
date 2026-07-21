@@ -397,7 +397,16 @@ def activate_connector(
             _require_workspace_connector_manage_access(db, body.organization_id, body.workspace_id, user)
             target_workspace_id = body.workspace_id
         try:
-            ensure_connector_slot(db, body.organization_id)
+            existing = (
+                db.query(IntegrationConnector)
+                .filter(
+                    IntegrationConnector.organization_id == body.organization_id,
+                    IntegrationConnector.connector_type == integration_norm,
+                )
+                .one_or_none()
+            )
+            if existing is None:
+                ensure_connector_slot(db, body.organization_id)
             register_connector_integration(db, body.organization_id, integration_norm)
             cfg: dict = {}
             if target_workspace_id:
@@ -418,14 +427,6 @@ def activate_connector(
                         cfg["drive_folder_ids"] = sanitize_drive_folder_ids(body.drive_folder_ids)
                     if body.drive_include_subfolders is not None:
                         cfg["drive_include_subfolders"] = bool(body.drive_include_subfolders)
-            existing = (
-                db.query(IntegrationConnector)
-                .filter(
-                    IntegrationConnector.organization_id == body.organization_id,
-                    IntegrationConnector.connector_type == integration_norm,
-                )
-                .one_or_none()
-            )
             if existing:
                 existing.nango_connection_id = body.connection_id
                 existing.status = "active"
