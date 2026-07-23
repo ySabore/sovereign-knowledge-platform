@@ -931,26 +931,28 @@ def update_organization(
         raw_ur = patch["use_hosted_rerank"]
         org.use_hosted_rerank = bool(raw_ur) if raw_ur is not None else False
     if "allowed_connector_ids" in patch:
-        normalized_allowed = _normalize_allowed_connector_ids(patch["allowed_connector_ids"])
-        connectors_max = int(get_plan_entitlements(org.plan).connectors)
-        catalog_size = len(settings.connector_catalog())
-        if normalized_allowed is None and catalog_size > connectors_max:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Plan connector limit is {connectors_max}. "
-                    "Select up to that many connectors for this organization."
-                ),
-            )
-        if normalized_allowed is not None and len(normalized_allowed) > connectors_max:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Plan connector limit is {connectors_max}. "
-                    f"You selected {len(normalized_allowed)}."
-                ),
-            )
-        org.allowed_connector_ids = normalized_allowed
+        raw_allowed = patch["allowed_connector_ids"]
+        if raw_allowed != org.allowed_connector_ids:
+            normalized_allowed = _normalize_allowed_connector_ids(raw_allowed)
+            connectors_max = int(get_plan_entitlements(org.plan).connectors)
+            catalog_size = len(settings.connector_catalog())
+            if normalized_allowed is None and catalog_size > connectors_max:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Plan connector limit is {connectors_max}. "
+                        "Select up to that many connectors for this organization."
+                    ),
+                )
+            if normalized_allowed is not None and len(normalized_allowed) > connectors_max:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Plan connector limit is {connectors_max}. "
+                        f"You selected {len(normalized_allowed)}."
+                    ),
+                )
+            org.allowed_connector_ids = normalized_allowed
 
     _write_audit_log(
         db,

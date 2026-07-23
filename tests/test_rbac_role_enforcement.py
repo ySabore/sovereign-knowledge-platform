@@ -357,6 +357,34 @@ class RBACRoleEnforcementTests(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body.get("allowed_connector_ids"), ["google-drive"])
 
+    def test_org_owner_can_save_settings_with_unchanged_unrestricted_connector_policy(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        resp = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"name": "Renamed RBAC Org", "allowed_connector_ids": None},
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body.get("name"), "Renamed RBAC Org")
+        self.assertIsNone(body.get("allowed_connector_ids"))
+
+    def test_org_owner_cannot_expand_restricted_policy_beyond_plan_limit(self) -> None:
+        headers = self._login("org-owner-rbac@example.com")
+        set_policy = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": ["google-drive"]},
+            headers=headers,
+        )
+        self.assertEqual(set_policy.status_code, 200, set_policy.text)
+
+        resp = self.client.patch(
+            f"/organizations/{self.org_id}",
+            json={"allowed_connector_ids": None},
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 409, resp.text)
+
     def test_activate_connector_rejects_disallowed_org_connector(self) -> None:
         headers = self._login("org-owner-rbac@example.com")
         set_policy = self.client.patch(
