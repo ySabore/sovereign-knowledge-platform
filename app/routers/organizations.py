@@ -671,7 +671,10 @@ def accept_organization_invite(
         raise HTTPException(status_code=404, detail="Invite not found or already used")
 
     now = datetime.now(timezone.utc)
-    if invite.expires_at < now:
+    expires_at = invite.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
         invite.status = "expired"
         db.commit()
         raise HTTPException(status_code=410, detail="Invite has expired")

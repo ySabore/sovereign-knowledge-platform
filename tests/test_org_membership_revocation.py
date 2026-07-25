@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from io import BytesIO
 from uuid import uuid4
 
@@ -87,6 +87,10 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             )
             db.add_all([self.owner, self.member])
             db.flush()
+            self.owner_id = self.owner.id
+            self.member_id = self.member.id
+            self.owner_email = self.owner.email
+            self.member_email = self.member.email
 
             org = Organization(
                 name="Revoke Org",
@@ -106,22 +110,22 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             db.add_all(
                 [
                     OrganizationMembership(
-                        user_id=self.owner.id,
+                        user_id=self.owner_id,
                         organization_id=org.id,
                         role=OrgMembershipRole.org_owner.value,
                     ),
                     OrganizationMembership(
-                        user_id=self.member.id,
+                        user_id=self.member_id,
                         organization_id=org.id,
                         role=OrgMembershipRole.member.value,
                     ),
                     WorkspaceMember(
-                        user_id=self.owner.id,
+                        user_id=self.owner_id,
                         workspace_id=ws.id,
                         role=WorkspaceMemberRole.workspace_admin.value,
                     ),
                     WorkspaceMember(
-                        user_id=self.member.id,
+                        user_id=self.member_id,
                         workspace_id=ws.id,
                         role=WorkspaceMemberRole.workspace_admin.value,
                     ),
@@ -137,13 +141,13 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     def test_remove_org_member_revokes_workspace_access(self) -> None:
-        member_headers = self._login("member-revoke@example.com")
+        member_headers = self._login(self.member_email)
         before = self.client.get(f"/workspaces/{self.workspace_id}", headers=member_headers)
         self.assertEqual(before.status_code, 200, before.text)
 
-        owner_headers = self._login("owner-revoke@example.com")
+        owner_headers = self._login(self.owner_email)
         removed = self.client.delete(
-            f"/organizations/{self.org_id}/members/{self.member.id}",
+            f"/organizations/{self.org_id}/members/{self.member_id}",
             headers=owner_headers,
         )
         self.assertEqual(removed.status_code, 204, removed.text)
@@ -160,7 +164,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             leftover = (
                 db.query(WorkspaceMember)
                 .filter(
-                    WorkspaceMember.user_id == self.member.id,
+                    WorkspaceMember.user_id == self.member_id,
                     WorkspaceMember.workspace_id == self.workspace_id,
                 )
                 .one_or_none()
@@ -175,19 +179,19 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             token = "stale-member-invite-token"
             invite = OrganizationInvite(
                 organization_id=self.org_id,
-                email=self.member.email,
+                email=self.member_email,
                 role=OrgMembershipRole.member.value,
                 status="pending",
                 invite_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
-                invited_by_user_id=self.owner.id,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                invited_by_user_id=self.owner_id,
+                expires_at=datetime.utcnow() + timedelta(days=7),
             )
             db.add(invite)
             membership = (
                 db.query(OrganizationMembership)
                 .filter(
                     OrganizationMembership.organization_id == self.org_id,
-                    OrganizationMembership.user_id == self.member.id,
+                    OrganizationMembership.user_id == self.member_id,
                 )
                 .one()
             )
@@ -196,7 +200,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 db.query(WorkspaceMember)
                 .filter(
                     WorkspaceMember.workspace_id == self.workspace_id,
-                    WorkspaceMember.user_id == self.member.id,
+                    WorkspaceMember.user_id == self.member_id,
                 )
                 .one()
             )
@@ -205,7 +209,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         finally:
             db.close()
 
-        headers = self._login("member-revoke@example.com")
+        headers = self._login(self.member_email)
         resp = self.client.post("/organizations/invites/accept", json={"token": token}, headers=headers)
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json()["role"], OrgMembershipRole.org_owner.value)
@@ -216,7 +220,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 db.query(OrganizationMembership)
                 .filter(
                     OrganizationMembership.organization_id == self.org_id,
-                    OrganizationMembership.user_id == self.member.id,
+                    OrganizationMembership.user_id == self.member_id,
                 )
                 .one()
             )
@@ -225,7 +229,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 db.query(WorkspaceMember)
                 .filter(
                     WorkspaceMember.workspace_id == self.workspace_id,
-                    WorkspaceMember.user_id == self.member.id,
+                    WorkspaceMember.user_id == self.member_id,
                 )
                 .one()
             )
@@ -238,12 +242,12 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         try:
             invite = OrganizationInvite(
                 organization_id=self.org_id,
-                email=self.member.email,
+                email=self.member_email,
                 role=OrgMembershipRole.member.value,
                 status="pending",
                 invite_token_hash=hashlib.sha256(b"pending").hexdigest(),
-                invited_by_user_id=self.owner.id,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                invited_by_user_id=self.owner_id,
+                expires_at=datetime.utcnow() + timedelta(days=7),
             )
             db.add(invite)
             db.commit()
@@ -251,10 +255,10 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         finally:
             db.close()
 
-        owner_headers = self._login("owner-revoke@example.com")
+        owner_headers = self._login(self.owner_email)
         resp = self.client.put(
             f"/organizations/{self.org_id}/members",
-            json={"email": self.member.email, "role": "org_owner"},
+            json={"email": self.member_email, "role": "org_owner"},
             headers=owner_headers,
         )
         self.assertEqual(resp.status_code, 200, resp.text)
@@ -274,7 +278,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 db.query(WorkspaceMember)
                 .filter(
                     WorkspaceMember.workspace_id == self.workspace_id,
-                    WorkspaceMember.user_id == self.member.id,
+                    WorkspaceMember.user_id == self.member_id,
                 )
                 .one()
             )
@@ -283,7 +287,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         finally:
             db.close()
 
-        headers = self._login("member-revoke@example.com")
+        headers = self._login(self.member_email)
         resp = self.client.post(
             f"/chat/workspaces/{self.workspace_id}/upload",
             headers=headers,
@@ -299,7 +303,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             allowed = Document(
                 organization_id=self.org_id,
                 workspace_id=self.workspace_id,
-                created_by=self.owner.id,
+                created_by=self.owner_id,
                 filename="allowed.txt",
                 content_type="text/plain",
                 storage_path="",
@@ -311,7 +315,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
             denied = Document(
                 organization_id=self.org_id,
                 workspace_id=self.workspace_id,
-                created_by=self.owner.id,
+                created_by=self.owner_id,
                 filename="secret.txt",
                 content_type="text/plain",
                 storage_path="",
@@ -326,7 +330,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 DocumentPermission(
                     document_id=allowed.id,
                     organization_id=self.org_id,
-                    user_id=self.member.id,
+                    user_id=self.member_id,
                     can_read=True,
                     source="test",
                     external_id="perm-1",
@@ -337,7 +341,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
                 db.query(WorkspaceMember)
                 .filter(
                     WorkspaceMember.workspace_id == self.workspace_id,
-                    WorkspaceMember.user_id == self.member.id,
+                    WorkspaceMember.user_id == self.member_id,
                 )
                 .one()
             )
@@ -348,7 +352,7 @@ class OrgMembershipRevocationTests(unittest.TestCase):
         finally:
             db.close()
 
-        headers = self._login("member-revoke@example.com")
+        headers = self._login(self.member_email)
         listed = self.client.get(f"/documents/workspaces/{self.workspace_id}", headers=headers)
         self.assertEqual(listed.status_code, 200, listed.text)
         ids = {row["id"] for row in listed.json()}
