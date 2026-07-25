@@ -182,6 +182,16 @@ def _issue_invite_token() -> tuple[str, str]:
     return token, token_hash
 
 
+_ORG_ROLE_RANK = {
+    OrgMembershipRole.member.value: 0,
+    OrgMembershipRole.org_owner.value: 1,
+}
+
+
+def _org_role_rank(role: str | None) -> int:
+    return _ORG_ROLE_RANK.get((role or "").strip().lower(), -1)
+
+
 def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_id: UUID, org_role: str) -> None:
     default_ws = (
         db.query(Workspace)
@@ -214,6 +224,37 @@ def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_
     else:
         ws_membership.role = desired_ws_role
         db.add(ws_membership)
+
+
+def _revoke_pending_invites_for_email(db: Session, org_id: UUID, email: str) -> None:
+    normalized = email.strip().lower()
+    if not normalized:
+        return
+    pending = (
+        db.query(OrganizationInvite)
+        .filter(
+            OrganizationInvite.organization_id == org_id,
+            OrganizationInvite.email == normalized,
+            OrganizationInvite.status == "pending",
+        )
+        .all()
+    )
+    for invite in pending:
+        invite.status = "revoked"
+
+
+def _revoke_org_workspace_memberships(db: Session, org_id: UUID, user_id: UUID) -> None:
+    workspace_ids = [row[0] for row in db.query(Workspace.id).filter(Workspace.organization_id == org_id).all()]
+    if not workspace_ids:
+        return
+    (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.user_id == user_id,
+            WorkspaceMember.workspace_id.in_(workspace_ids),
+        )
+        .delete(synchronize_session=False)
+    )
 
 
 def _require_workspace_admin(db: Session, workspace_id: UUID, user: User) -> Workspace:
@@ -649,9 +690,12 @@ def accept_organization_invite(
             role=invite.role,
         )
         db.add(membership)
+        _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
     else:
-        membership.role = invite.role
-    _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
+        # Never demote an existing membership via a stale/lower-privilege invite.
+        if _org_role_rank(invite.role) > _org_role_rank(membership.role):
+            membership.role = invite.role
+            _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
 
     invite.status = "accepted"
     invite.accepted_by_user_id = user.id
@@ -804,6 +848,8 @@ def upsert_organization_member(
         membership.role = normalized_role
 
     _ensure_default_workspace_membership(db, org_id, target_user.id, normalized_role)
+    # Prevent stale invites from later overwriting this membership on accept.
+    _revoke_pending_invites_for_email(db, org_id, target_user.email)
 
     db.flush()
     _write_audit_log(
@@ -1020,6 +1066,7 @@ def remove_organization_member(
     if membership.role == OrgMembershipRole.org_owner.value and _count_org_owners(db, org_id) <= 1:
         raise HTTPException(status_code=409, detail="Cannot remove the last organization owner")
 
+    removed_user = db.get(User, membership.user_id)
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -1029,6 +1076,9 @@ def remove_organization_member(
         organization_id=org_id,
         metadata={"member_user_id": str(membership.user_id), "role": membership.role},
     )
+    _revoke_org_workspace_memberships(db, org_id, membership.user_id)
+    if removed_user is not None:
+        _revoke_pending_invites_for_email(db, org_id, removed_user.email)
     db.delete(membership)
     db.commit()
 
@@ -1092,17 +1142,17 @@ def list_my_workspaces(
         return list(rows)
     rows = (
         db.query(Workspace)
-        .outerjoin(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .outerjoin(
+        .join(
             OrganizationMembership,
             OrganizationMembership.organization_id == Workspace.organization_id,
         )
+        .outerjoin(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
         .filter(
-            (WorkspaceMember.user_id == user.id)
-            | (
-                (OrganizationMembership.user_id == user.id)
-                & (OrganizationMembership.role == OrgMembershipRole.org_owner.value)
-            )
+            OrganizationMembership.user_id == user.id,
+            (
+                (OrganizationMembership.role == OrgMembershipRole.org_owner.value)
+                | (WorkspaceMember.user_id == user.id)
+            ),
         )
         .distinct()
         .order_by(Workspace.created_at.asc())
