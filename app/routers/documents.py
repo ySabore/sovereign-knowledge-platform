@@ -41,11 +41,11 @@ from app.schemas.auth import (
 from app.services.embeddings import EmbeddingServiceError, get_embedding_client
 from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
 from app.services.ingestion_service import IngestDocumentParams, ingest_document
-from app.services.permissions import ensure_upload_permission_row
+from app.services.permissions import ensure_upload_permission_row, get_accessible_document_ids, has_document_access
 from app.services.storage import cleanup_temp_extraction_file
 from app.services.rag import build_grounded_answer, resolve_top_k, run_retrieval_pipeline
 from app.services.rate_limits import enforce_org_query_limits
-from app.services.workspace_access import resolve_workspace_for_user
+from app.services.workspace_access import require_workspace_contributor, resolve_workspace_for_user
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -90,6 +90,8 @@ def _get_document_for_user(db: Session, document_id: UUID, user: User) -> Docume
     workspace = resolve_workspace_for_user(db, document.workspace_id, user)
     if workspace is None:
         return None
+    if not has_document_access(db, user_id=user.id, document_id=document.id, user=user):
+        return None
     return document
 
 
@@ -125,20 +127,7 @@ def _is_org_owner_for_workspace(db: Session, workspace: Workspace, user: User) -
 
 
 def _require_workspace_contributor(db: Session, workspace_id: UUID, user: User) -> Workspace:
-    workspace = resolve_workspace_for_user(db, workspace_id, user)
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
-    if user.is_platform_owner or _is_org_owner_for_workspace(db, workspace, user):
-        return workspace
-    membership = _workspace_membership_for_user(db, workspace_id, user.id)
-    if membership is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
-    if membership.role not in {
-        WorkspaceMemberRole.workspace_admin.value,
-        WorkspaceMemberRole.editor.value,
-    }:
-        raise HTTPException(status_code=403, detail="Workspace contributor role required")
-    return workspace
+    return require_workspace_contributor(db, workspace_id, user)
 
 
 def _can_delete_document(db: Session, document: Document, user: User) -> bool:
@@ -350,10 +339,19 @@ def list_workspace_documents(
     workspace = resolve_workspace_for_user(db, workspace_id, user)
     if workspace is None:
         raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    allowed_ids = get_accessible_document_ids(
+        db,
+        user_id=user.id,
+        organization_id=workspace.organization_id,
+        workspace_id=workspace_id,
+        user=user,
+    )
+    if not allowed_ids:
+        return []
     rows = (
         db.query(Document)
         .options(joinedload(Document.ingestion_job))
-        .filter(Document.workspace_id == workspace_id)
+        .filter(Document.workspace_id == workspace_id, Document.id.in_(allowed_ids))
         .order_by(Document.created_at.desc())
         .all()
     )

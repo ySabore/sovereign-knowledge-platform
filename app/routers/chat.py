@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.limiter import limiter
@@ -64,7 +65,7 @@ from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.query_log import record_chat_turn_query_log
 from app.services.rate_limits import enforce_org_query_limits
 from app.services.storage import cleanup_temp_extraction_file
-from app.services.workspace_access import resolve_workspace_for_user
+from app.services.workspace_access import require_workspace_contributor, resolve_workspace_for_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 def _source_type_for_upload_filename(filename: str) -> str:
@@ -375,9 +376,7 @@ async def upload_document_from_chat(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentIngestionResponse:
-    workspace = resolve_workspace_for_user(db, workspace_id, user)
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="Not a member of this workspace")
+    workspace = require_workspace_contributor(db, workspace_id, user)
 
     stored = await persist_upload_file(file, settings.document_storage_root, workspace_id)
     upload_name = (file.filename or "document").strip() or "document"

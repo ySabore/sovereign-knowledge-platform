@@ -132,7 +132,8 @@ def _require_workspace_connector_manage_access(db: Session, org_id: UUID, worksp
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return ws
-    if _workspace_manage_allowed(db, workspace_id, user.id):
+    # Workspace-admin connector manage still requires a live org membership.
+    if role is not None and _workspace_manage_allowed(db, workspace_id, user.id):
         return ws
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -351,7 +352,7 @@ def _require_connector_view_access(db: Session, org_id: UUID, user: User) -> Non
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return
-    if _has_workspace_role_in_org(
+    if role is not None and _has_workspace_role_in_org(
         db,
         org_id,
         user.id,
@@ -370,7 +371,10 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return
-    if _has_workspace_role_in_org(db, org_id, user.id, {WorkspaceMemberRole.workspace_admin.value}):
+    # Workspace-admin connector manage still requires a live org membership.
+    if role is not None and _has_workspace_role_in_org(
+        db, org_id, user.id, {WorkspaceMemberRole.workspace_admin.value}
+    ):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Connector management requires workspace admin or higher")
 
