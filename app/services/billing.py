@@ -525,25 +525,130 @@ def handle_checkout_session_completed(db: Session, session: dict[str, Any]) -> N
     db.commit()
 
 
-def handle_subscription_updated(db: Session, sub: dict[str, Any]) -> None:
+_TERMINAL_SUBSCRIPTION_STATUSES = frozenset({"canceled", "unpaid", "incomplete_expired"})
+
+
+def _subscription_status(sub: dict[str, Any]) -> str:
+    return str(sub.get("status") or "").strip().lower()
+
+
+def _resolve_org_for_subscription_event(
+    db: Session, sub: dict[str, Any]
+) -> tuple[Organization | None, str | None]:
+    """Locate the org for a subscription webhook.
+
+    Preference order:
+    1. Exact ``stripe_subscription_id`` match
+    2. ``metadata.organization_id`` (set at Checkout)
+    3. ``stripe_customer_id`` fallback
+
+    Returns ``(org, match_reason)`` where match_reason is one of
+    ``subscription``, ``metadata``, ``customer``, or ``None``.
+    """
     sub_id = sub.get("id")
-    cust_id = sub.get("customer") if isinstance(sub.get("customer"), str) else None
-    org = None
-    if isinstance(sub_id, str):
+    if isinstance(sub_id, str) and sub_id:
         org = (
             db.query(Organization)
             .filter(Organization.stripe_subscription_id == sub_id)
             .one_or_none()
         )
-    if org is None and cust_id:
+        if org is not None:
+            return org, "subscription"
+
+    meta = sub.get("metadata") or {}
+    org_id_str = meta.get("organization_id") if isinstance(meta, dict) else None
+    if org_id_str:
+        try:
+            oid = UUID(str(org_id_str))
+        except ValueError:
+            oid = None
+        if oid is not None:
+            org = db.get(Organization, oid)
+            if org is not None:
+                # Refuse to attach over a different live subscription id.
+                if org.stripe_subscription_id and org.stripe_subscription_id != sub_id:
+                    logger.warning(
+                        "subscription.updated %s metadata org %s already linked to %s; ignoring",
+                        sub_id,
+                        org.id,
+                        org.stripe_subscription_id,
+                    )
+                    return None, None
+                return org, "metadata"
+
+    cust_id = sub.get("customer") if isinstance(sub.get("customer"), str) else None
+    if cust_id:
         org = (
             db.query(Organization)
             .filter(Organization.stripe_customer_id == cust_id)
             .one_or_none()
         )
+        if org is not None:
+            if org.stripe_subscription_id and org.stripe_subscription_id != sub_id:
+                logger.warning(
+                    "subscription.updated %s customer fallback org %s already linked to %s; ignoring",
+                    sub_id,
+                    org.id,
+                    org.stripe_subscription_id,
+                )
+                return None, None
+            return org, "customer"
+    return None, None
+
+
+def _reconcile_subscription_payload(sub: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Return (payload, live_reconciled).
+
+    Prefer live Stripe state so delayed/out-of-order webhook snapshots cannot
+    resurrect a subscription that has already been canceled or deleted.
+    """
+    sub_id = sub.get("id")
+    if not isinstance(sub_id, str) or not sub_id or not stripe_configured():
+        return sub, False
+    try:
+        _configure_stripe()
+        import stripe
+
+        live = stripe.Subscription.retrieve(sub_id)
+        live_dict = live.to_dict() if hasattr(live, "to_dict") else dict(live)
+        return live_dict, True
+    except Exception as exc:
+        if _is_missing_subscription_error(exc):
+            return {"id": sub_id, "status": "canceled", "customer": sub.get("customer")}, True
+        logger.warning("stripe subscription retrieve failed during webhook: %s", exc)
+        return sub, False
+
+
+def handle_subscription_updated(db: Session, sub: dict[str, Any]) -> None:
+    event_sub, live_reconciled = _reconcile_subscription_payload(sub)
+    status = _subscription_status(event_sub)
+
+    org, matched_by = _resolve_org_for_subscription_event(db, event_sub)
     if org is None:
+        # Common after subscription.deleted already cleared the subscription link.
         return
-    apply_subscription_object_to_org(db, org, sub)
+
+    # After subscription.deleted we clear stripe_subscription_id but keep
+    # stripe_customer_id. A delayed subscription.updated with a stale active
+    # snapshot would otherwise match by customer/metadata and restore paid plan.
+    # Only grant/restore non-terminal entitlements when we reconciled live state
+    # (or still have an exact subscription-id link).
+    if (
+        matched_by != "subscription"
+        and org.stripe_subscription_id is None
+        and status not in _TERMINAL_SUBSCRIPTION_STATUSES
+        and not live_reconciled
+    ):
+        logger.warning(
+            "Ignoring subscription.updated for %s on org %s: unlinked org matched via %s "
+            "without live Stripe reconciliation",
+            event_sub.get("id"),
+            org.id,
+            matched_by,
+        )
+        return
+
+    apply_subscription_object_to_org(db, org, event_sub)
     write_billing_audit_event(
         db,
         organization_id=org.id,
@@ -552,10 +657,12 @@ def handle_subscription_updated(db: Session, sub: dict[str, Any]) -> None:
         actor_role="system",
         metadata={
             "source": "stripe_webhook",
-            "stripe_subscription_id": sub.get("id"),
-            "stripe_customer_id": sub.get("customer"),
-            "status": sub.get("status"),
+            "stripe_subscription_id": event_sub.get("id"),
+            "stripe_customer_id": event_sub.get("customer"),
+            "status": event_sub.get("status"),
             "plan_after": org.plan,
+            "matched_by": matched_by,
+            "live_reconciled": live_reconciled,
         },
     )
     db.commit()
