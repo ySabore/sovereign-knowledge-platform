@@ -96,6 +96,30 @@ class BillingEntitlementsTests(unittest.TestCase):
                 )
         self.assertIn("already has an active Stripe subscription", str(ctx.exception))
 
+    def _billing_db(self, org: SimpleNamespace, *, subscription_match: SimpleNamespace | None = None):
+        """Minimal Session stand-in for subscription webhook resolution."""
+        lookup_count = {"n": 0}
+
+        def _query(model):
+            q = MagicMock()
+            q.filter.return_value = q
+
+            def _one_or_none():
+                lookup_count["n"] += 1
+                # First filtered lookup is always by stripe_subscription_id.
+                if lookup_count["n"] == 1:
+                    return subscription_match
+                return org
+
+            q.one_or_none.side_effect = _one_or_none
+            return q
+
+        db = MagicMock()
+        db.query.side_effect = _query
+        db.get.side_effect = lambda model, oid: org if oid == org.id else None
+        db.commit = MagicMock()
+        return db
+
     def test_stale_subscription_updated_does_not_resurrect_canceled_plan(self) -> None:
         """Out-of-order active snapshot after subscription.deleted must not restore paid plan."""
         org_id = uuid4()
@@ -106,18 +130,7 @@ class BillingEntitlementsTests(unittest.TestCase):
             stripe_subscription_id=None,
             billing_grace_until=None,
         )
-
-        def _query(model):
-            q = MagicMock()
-            q.filter.return_value = q
-            # subscription-id lookup misses (cleared by deleted); customer fallback hits.
-            q.one_or_none.side_effect = [None, org]
-            return q
-
-        db = MagicMock()
-        db.query.side_effect = _query
-        db.get.return_value = None
-        db.commit = MagicMock()
+        db = self._billing_db(org)
 
         stale_active_event = {
             "id": "sub_123",
@@ -164,17 +177,7 @@ class BillingEntitlementsTests(unittest.TestCase):
             stripe_subscription_id=None,
             billing_grace_until=None,
         )
-
-        def _query(model):
-            q = MagicMock()
-            q.filter.return_value = q
-            q.one_or_none.side_effect = [None, org]
-            return q
-
-        db = MagicMock()
-        db.query.side_effect = _query
-        db.get.return_value = None
-        db.commit = MagicMock()
+        db = self._billing_db(org)
 
         event = {
             "id": "sub_new",
@@ -213,17 +216,7 @@ class BillingEntitlementsTests(unittest.TestCase):
             stripe_subscription_id=None,
             billing_grace_until=None,
         )
-
-        def _query(model):
-            q = MagicMock()
-            q.filter.return_value = q
-            q.one_or_none.side_effect = [None, org]
-            return q
-
-        db = MagicMock()
-        db.query.side_effect = _query
-        db.get.return_value = None
-        db.commit = MagicMock()
+        db = self._billing_db(org)
 
         event = {
             "id": "sub_123",
