@@ -3,12 +3,14 @@ from __future__ import annotations
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from app.services.billing import (
     DEFAULT_PLAN_PRICE_DISPLAY,
     create_checkout_session,
     get_plan_entitlements,
+    handle_subscription_updated,
     list_invoice_history,
     list_plan_catalog,
     normalize_plan_key,
@@ -93,6 +95,155 @@ class BillingEntitlementsTests(unittest.TestCase):
                     cancel_url="http://localhost/cancel",
                 )
         self.assertIn("already has an active Stripe subscription", str(ctx.exception))
+
+    def _billing_db(self, org: SimpleNamespace, *, subscription_match: SimpleNamespace | None = None):
+        """Minimal Session stand-in for subscription webhook resolution."""
+        lookup_count = {"n": 0}
+
+        def _query(model):
+            q = MagicMock()
+            q.filter.return_value = q
+
+            def _one_or_none():
+                lookup_count["n"] += 1
+                # First filtered lookup is always by stripe_subscription_id.
+                if lookup_count["n"] == 1:
+                    return subscription_match
+                return org
+
+            q.one_or_none.side_effect = _one_or_none
+            return q
+
+        db = MagicMock()
+        db.query.side_effect = _query
+        db.get.side_effect = lambda model, oid: org if oid == org.id else None
+        db.commit = MagicMock()
+        return db
+
+    def test_stale_subscription_updated_does_not_resurrect_canceled_plan(self) -> None:
+        """Out-of-order active snapshot after subscription.deleted must not restore paid plan."""
+        org_id = uuid4()
+        org = SimpleNamespace(
+            id=org_id,
+            plan="free",
+            stripe_customer_id="cus_123",
+            stripe_subscription_id=None,
+            billing_grace_until=None,
+        )
+        db = self._billing_db(org)
+
+        stale_active_event = {
+            "id": "sub_123",
+            "customer": "cus_123",
+            "status": "active",
+            "metadata": {"organization_id": str(org_id)},
+            "items": {"data": [{"price": {"id": "price_team"}}]},
+        }
+        live_canceled = {
+            "id": "sub_123",
+            "customer": "cus_123",
+            "status": "canceled",
+            "metadata": {"organization_id": str(org_id)},
+            "items": {"data": [{"price": {"id": "price_team"}}]},
+        }
+
+        class FakeSub:
+            @staticmethod
+            def retrieve(sub_id: str):
+                self.assertEqual(sub_id, "sub_123")
+                return live_canceled
+
+        fake_stripe = SimpleNamespace(Subscription=FakeSub)
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch("app.services.billing.invalidate_plan_cache"), patch(
+            "app.services.billing.write_billing_audit_event"
+        ), patch("app.services.billing.price_id_to_plan", return_value="team"), patch.dict(
+            sys.modules, {"stripe": fake_stripe}
+        ):
+            handle_subscription_updated(db, stale_active_event)
+
+        self.assertEqual(org.plan, "free")
+        self.assertIsNone(org.stripe_subscription_id)
+        db.commit.assert_called_once()
+
+    def test_subscription_updated_attaches_when_live_subscription_still_active(self) -> None:
+        org_id = uuid4()
+        org = SimpleNamespace(
+            id=org_id,
+            plan="free",
+            stripe_customer_id="cus_123",
+            stripe_subscription_id=None,
+            billing_grace_until=None,
+        )
+        db = self._billing_db(org)
+
+        event = {
+            "id": "sub_new",
+            "customer": "cus_123",
+            "status": "active",
+            "metadata": {"organization_id": str(org_id)},
+            "items": {"data": [{"price": {"id": "price_team"}}]},
+        }
+        live_active = dict(event)
+
+        class FakeSub:
+            @staticmethod
+            def retrieve(sub_id: str):
+                return live_active
+
+        fake_stripe = SimpleNamespace(Subscription=FakeSub)
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch("app.services.billing.invalidate_plan_cache"), patch(
+            "app.services.billing.write_billing_audit_event"
+        ), patch("app.services.billing.price_id_to_plan", return_value="team"), patch.dict(
+            sys.modules, {"stripe": fake_stripe}
+        ):
+            handle_subscription_updated(db, event)
+
+        self.assertEqual(org.plan, "team")
+        self.assertEqual(org.stripe_subscription_id, "sub_new")
+
+    def test_unreconciled_active_update_ignored_for_unlinked_org(self) -> None:
+        """Fail closed when Stripe retrieve fails and org subscription link was cleared."""
+        org = SimpleNamespace(
+            id=uuid4(),
+            plan="free",
+            stripe_customer_id="cus_123",
+            stripe_subscription_id=None,
+            billing_grace_until=None,
+        )
+        db = self._billing_db(org)
+
+        event = {
+            "id": "sub_123",
+            "customer": "cus_123",
+            "status": "active",
+            "items": {"data": [{"price": {"id": "price_team"}}]},
+        }
+
+        class FakeSub:
+            @staticmethod
+            def retrieve(sub_id: str):
+                raise RuntimeError("stripe temporarily unavailable")
+
+        fake_stripe = SimpleNamespace(Subscription=FakeSub)
+
+        with patch("app.services.billing.stripe_configured", return_value=True), patch(
+            "app.services.billing._configure_stripe"
+        ), patch("app.services.billing.invalidate_plan_cache"), patch(
+            "app.services.billing.write_billing_audit_event"
+        ), patch("app.services.billing.price_id_to_plan", return_value="team"), patch.dict(
+            sys.modules, {"stripe": fake_stripe}
+        ):
+            handle_subscription_updated(db, event)
+
+        self.assertEqual(org.plan, "free")
+        self.assertIsNone(org.stripe_subscription_id)
+        db.commit.assert_not_called()
 
 
 if __name__ == "__main__":
