@@ -15,13 +15,21 @@ def ollama_base_url_for_org(org: Organization | None) -> str:
 
 
 def resolve_openai_for_org(org: Organization | None) -> tuple[str, str, str]:
-    """Returns (api_key, model, base_url_without_trailing_slash)."""
+    """Returns (api_key, model, base_url_without_trailing_slash).
+
+    Org-controlled base URLs are only honored when the org supplies its own API key.
+    Platform fallback keys always use the platform base URL so a tenant cannot redirect
+    platform credentials to an attacker-controlled endpoint.
+    """
     key: str | None = None
+    using_org_key = False
     if org and org.openai_api_key_encrypted:
         try:
             key = decrypt_org_secret(org.openai_api_key_encrypted)
         except (RuntimeError, ValueError) as exc:
             raise RuntimeError(f"Could not read stored OpenAI API key: {exc}") from exc
+        if key:
+            using_org_key = True
     if not key:
         key = (settings.openai_api_key or "").strip() or None
     if not key:
@@ -33,21 +41,32 @@ def resolve_openai_for_org(org: Organization | None) -> tuple[str, str, str]:
         (org.preferred_chat_model.strip() if org and org.preferred_chat_model else "")
         or settings.openai_default_chat_model
     )
-    base = (
-        (org.openai_api_base_url.strip() if org and org.openai_api_base_url else "")
-        or settings.openai_api_base
-    ).rstrip("/")
+    if using_org_key:
+        base = (
+            (org.openai_api_base_url.strip() if org and org.openai_api_base_url else "")
+            or settings.openai_api_base
+        ).rstrip("/")
+    else:
+        base = settings.openai_api_base.rstrip("/")
     return key, model, base
 
 
 def resolve_anthropic_for_org(org: Organization | None) -> tuple[str, str, str]:
-    """Returns (api_key, model, api_host_base e.g. https://api.anthropic.com)."""
+    """Returns (api_key, model, api_host_base e.g. https://api.anthropic.com).
+
+    Org-controlled base URLs are only honored when the org supplies its own API key.
+    Platform fallback keys always use the platform base URL so a tenant cannot redirect
+    platform credentials to an attacker-controlled endpoint.
+    """
     key: str | None = None
+    using_org_key = False
     if org and org.anthropic_api_key_encrypted:
         try:
             key = decrypt_org_secret(org.anthropic_api_key_encrypted)
         except (RuntimeError, ValueError) as exc:
             raise RuntimeError(f"Could not read stored Anthropic API key: {exc}") from exc
+        if key:
+            using_org_key = True
     if not key:
         key = (settings.anthropic_api_key or "").strip() or None
     if not key:
@@ -59,8 +78,11 @@ def resolve_anthropic_for_org(org: Organization | None) -> tuple[str, str, str]:
         (org.preferred_chat_model.strip() if org and org.preferred_chat_model else "")
         or settings.anthropic_default_chat_model
     )
-    base = (
-        (org.anthropic_api_base_url.strip() if org and org.anthropic_api_base_url else "")
-        or settings.anthropic_api_base
-    ).rstrip("/")
+    if using_org_key:
+        base = (
+            (org.anthropic_api_base_url.strip() if org and org.anthropic_api_base_url else "")
+            or settings.anthropic_api_base
+        ).rstrip("/")
+    else:
+        base = settings.anthropic_api_base.rstrip("/")
     return key, model, base
