@@ -309,7 +309,7 @@ def ingest_text_document(
 ) -> IngestTextResponse:
     """
     Index raw text (e.g. from Confluence/Google Drive connectors). HTML is cleaned server-side.
-    Idempotent on (organization_id, source_type, external_id): re-ingest replaces chunks.
+    Idempotent on (organization_id, workspace_id, source_type, external_id): re-ingest replaces chunks.
     """
     workspace = _require_workspace_contributor(db, workspace_id, user)
 
