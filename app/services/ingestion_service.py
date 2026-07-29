@@ -41,7 +41,8 @@ def _delete_chunks_for_document(db: Session, document_id: UUID) -> None:
 
 def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, int]:
     """
-    Create or update a document keyed by (organization_id, source_type, external_id),
+    Create or update a document keyed by
+    (organization_id, workspace_id, source_type, external_id),
     replace all chunks, embed, and mark indexed.
     """
     ext = params.external_id.strip()
@@ -53,6 +54,7 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
         db.query(Document)
         .filter(
             Document.organization_id == params.organization_id,
+            Document.workspace_id == params.workspace_id,
             Document.source_type == st,
             Document.external_id == ext,
         )
