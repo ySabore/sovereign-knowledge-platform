@@ -1,8 +1,14 @@
-"""Remove stored files and issue bulk deletes that rely on DB CASCADE for related rows."""
+"""Remove stored files and issue bulk deletes that rely on DB CASCADE for related rows.
+
+Artifact unlinks must run only after a successful DB commit. Deleting storage before
+commit risks permanent data loss when the transaction rolls back (document rows would
+still point at missing files). Prefer orphaned blobs over broken DB references.
+"""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -24,31 +30,52 @@ def _unlink_storage_path(storage_path: str | None) -> None:
         logger.warning("Could not delete stored file %s: %s", storage_path, exc)
 
 
-def unlink_document_files_for_organization(db: Session, organization_id: UUID) -> int:
-    paths = db.scalars(select(Document.storage_path).where(Document.organization_id == organization_id)).all()
-    for path in paths:
+def unlink_storage_paths(storage_paths: Iterable[str | None]) -> None:
+    """Best-effort artifact cleanup after a durable DB commit."""
+    for path in storage_paths:
         _unlink_storage_path(path)
+
+
+def collect_document_storage_path(db: Session, document_id: UUID) -> str | None:
+    return db.scalar(select(Document.storage_path).where(Document.id == document_id))
+
+
+def collect_document_storage_paths_for_organization(db: Session, organization_id: UUID) -> list[str]:
+    paths = db.scalars(select(Document.storage_path).where(Document.organization_id == organization_id)).all()
+    return [p for p in paths if p and str(p).strip()]
+
+
+def collect_document_storage_paths_for_workspace(db: Session, workspace_id: UUID) -> list[str]:
+    paths = db.scalars(select(Document.storage_path).where(Document.workspace_id == workspace_id)).all()
+    return [p for p in paths if p and str(p).strip()]
+
+
+def unlink_document_files_for_organization(db: Session, organization_id: UUID) -> int:
+    paths = collect_document_storage_paths_for_organization(db, organization_id)
+    unlink_storage_paths(paths)
     return len(paths)
 
 
 def unlink_document_files_for_workspace(db: Session, workspace_id: UUID) -> int:
-    paths = db.scalars(select(Document.storage_path).where(Document.workspace_id == workspace_id)).all()
-    for path in paths:
-        _unlink_storage_path(path)
+    paths = collect_document_storage_paths_for_workspace(db, workspace_id)
+    unlink_storage_paths(paths)
     return len(paths)
 
 
 def unlink_document_file(db: Session, document_id: UUID) -> None:
-    path = db.scalar(select(Document.storage_path).where(Document.id == document_id))
-    _unlink_storage_path(path)
+    unlink_storage_paths([collect_document_storage_path(db, document_id)])
 
 
-def delete_organization_cascade(db: Session, organization_id: UUID) -> None:
-    unlink_document_files_for_organization(db, organization_id)
+def delete_organization_cascade(db: Session, organization_id: UUID) -> list[str]:
+    """Delete the organization row (CASCADE related data). Return storage paths to unlink after commit."""
+    paths = collect_document_storage_paths_for_organization(db, organization_id)
     invalidate_plan_cache(organization_id)
     db.execute(delete(Organization).where(Organization.id == organization_id))
+    return paths
 
 
-def delete_workspace_cascade(db: Session, workspace_id: UUID) -> None:
-    unlink_document_files_for_workspace(db, workspace_id)
+def delete_workspace_cascade(db: Session, workspace_id: UUID) -> list[str]:
+    """Delete the workspace row (CASCADE related data). Return storage paths to unlink after commit."""
+    paths = collect_document_storage_paths_for_workspace(db, workspace_id)
     db.execute(delete(Workspace).where(Workspace.id == workspace_id))
+    return paths
