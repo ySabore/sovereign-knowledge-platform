@@ -51,21 +51,18 @@ def collect_document_storage_paths_for_workspace(db: Session, workspace_id: UUID
 
 
 def unlink_document_files_for_organization(db: Session, organization_id: UUID) -> int:
-    """Deprecated for pre-commit use; prefer collect + post-commit unlink_storage_paths."""
     paths = collect_document_storage_paths_for_organization(db, organization_id)
     unlink_storage_paths(paths)
     return len(paths)
 
 
 def unlink_document_files_for_workspace(db: Session, workspace_id: UUID) -> int:
-    """Deprecated for pre-commit use; prefer collect + post-commit unlink_storage_paths."""
     paths = collect_document_storage_paths_for_workspace(db, workspace_id)
     unlink_storage_paths(paths)
     return len(paths)
 
 
 def unlink_document_file(db: Session, document_id: UUID) -> None:
-    """Deprecated for pre-commit use; prefer collect + post-commit unlink_storage_paths."""
     unlink_storage_paths([collect_document_storage_path(db, document_id)])
 
 
