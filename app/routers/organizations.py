@@ -32,7 +32,11 @@ from app.services.billing import ensure_seat_available, get_plan_entitlements
 from app.services.metrics import list_audit_events_for_org, list_documents_for_org
 from app.services.field_encryption import encrypt_org_secret
 from app.services.invite_email import send_organization_invite_email
-from app.services.resource_cleanup import delete_organization_cascade, delete_workspace_cascade
+from app.services.resource_cleanup import (
+    delete_organization_cascade,
+    delete_workspace_cascade,
+    unlink_storage_paths,
+)
 from app.services.rate_limits import enforce_privileged_read_api_limit
 from app.services.workspace_access import resolve_workspace_for_user
 from app.schemas.auth import (
@@ -1002,8 +1006,9 @@ def delete_organization_endpoint(
         organization_id=org.id,
         metadata={"name": org.name, "slug": org.slug},
     )
-    delete_organization_cascade(db, org.id)
+    storage_paths = delete_organization_cascade(db, org.id)
     db.commit()
+    unlink_storage_paths(storage_paths)
 
 
 @router.delete("/{org_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1254,8 +1259,9 @@ def delete_workspace_endpoint(
         workspace_id=workspace.id,
         metadata={"name": workspace.name},
     )
-    delete_workspace_cascade(db, workspace_id)
+    storage_paths = delete_workspace_cascade(db, workspace_id)
     db.commit()
+    unlink_storage_paths(storage_paths)
 
 
 @router_w.delete("/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

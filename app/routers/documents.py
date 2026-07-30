@@ -26,7 +26,7 @@ from app.models import (
     utcnow,
 )
 from app.routers.organizations import _require_workspace_admin, _write_audit_log
-from app.services.resource_cleanup import unlink_document_file
+from app.services.resource_cleanup import collect_document_storage_path, unlink_storage_paths
 from app.schemas.auth import (
     DocumentChunkPublic,
     DocumentIngestionResponse,
@@ -409,6 +409,7 @@ def delete_document_route(
         raise HTTPException(status_code=404, detail="Document not found")
     if not _can_delete_document(db, document, user):
         raise HTTPException(status_code=403, detail="Not allowed to delete this document")
+    storage_path = collect_document_storage_path(db, document.id)
     _write_audit_log(
         db,
         actor_user_id=user.id,
@@ -419,9 +420,9 @@ def delete_document_route(
         workspace_id=document.workspace_id,
         metadata={"filename": document.filename},
     )
-    unlink_document_file(db, document.id)
     db.execute(delete(Document).where(Document.id == document_id))
     db.commit()
+    unlink_storage_paths([storage_path])
 
 
 @router.post("/workspaces/{workspace_id}/search", response_model=RetrievalQueryResponse)
