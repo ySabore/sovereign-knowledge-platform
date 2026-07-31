@@ -40,7 +40,11 @@ from app.schemas.auth import (
 )
 from app.services.embeddings import EmbeddingServiceError, get_embedding_client
 from app.services.ingestion import build_chunks, extract_pages_from_upload, persist_upload_file
-from app.services.ingestion_service import IngestDocumentParams, ingest_document
+from app.services.ingestion_service import (
+    IngestDocumentParams,
+    ingest_document,
+    is_reserved_upload_source_type,
+)
 from app.services.permissions import ensure_upload_permission_row
 from app.services.storage import cleanup_temp_extraction_file
 from app.services.rag import build_grounded_answer, resolve_top_k, run_retrieval_pipeline
@@ -312,6 +316,14 @@ def ingest_text_document(
     Idempotent on (organization_id, source_type, external_id): re-ingest replaces chunks.
     """
     workspace = _require_workspace_contributor(db, workspace_id, user)
+    if is_reserved_upload_source_type(body.source_type):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "source_type is reserved for file uploads; "
+                "use POST /documents/workspaces/{workspace_id}/upload"
+            ),
+        )
 
     try:
         doc_id, n = ingest_document(
