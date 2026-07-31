@@ -18,6 +18,26 @@ from app.services.embeddings import EmbeddingServiceError, get_embedding_client
 from app.services.ingestion import build_chunks_from_plain_text
 from app.services.permissions import apply_ingestion_acl, ensure_upload_permission_row
 
+# Reserved for multipart upload routes; must not be used as text-ingest identity keys.
+UPLOAD_SOURCE_TYPES = frozenset({"pdf-upload", "file-upload", "upload"})
+
+
+def is_reserved_upload_source_type(source_type: str) -> bool:
+    return source_type.strip().lower() in UPLOAD_SOURCE_TYPES
+
+
+def _is_file_upload_document(document: Document) -> bool:
+    """True for artifacts created by file upload routes (not connector/text ingest)."""
+    if is_reserved_upload_source_type(document.source_type or ""):
+        return True
+    provider = (document.storage_provider or "").strip().lower()
+    if provider in {"local", "s3"}:
+        return True
+    path = (document.storage_path or "").strip()
+    if path and not path.startswith("inline://"):
+        return True
+    return False
+
 
 @dataclass(slots=True)
 class IngestDocumentParams:
@@ -58,6 +78,13 @@ def ingest_document(db: Session, params: IngestDocumentParams) -> tuple[UUID, in
         )
         .one_or_none()
     )
+
+    if existing is not None and _is_file_upload_document(existing):
+        # Uploads set external_id=str(document.id). Without this guard, ingest-text
+        # with source_type=pdf-upload|file-upload can silently replace their chunks.
+        raise ValueError(
+            "Cannot replace a file-upload document via text ingest; use the upload endpoint"
+        )
 
     if existing is None:
         job = IngestionJob(
