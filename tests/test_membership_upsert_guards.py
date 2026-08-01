@@ -90,6 +90,10 @@ class MembershipUpsertGuardTests(unittest.TestCase):
             )
             db.add_all([self.sole_owner, self.second_owner, self.ws_admin, self.elevated_member])
             db.flush()
+            self.sole_owner_id = self.sole_owner.id
+            self.second_owner_id = self.second_owner.id
+            self.ws_admin_id = self.ws_admin.id
+            self.elevated_member_id = self.elevated_member.id
 
             org = Organization(
                 name="Upsert Guard Org",
@@ -119,32 +123,32 @@ class MembershipUpsertGuardTests(unittest.TestCase):
             db.add_all(
                 [
                     OrganizationMembership(
-                        user_id=self.sole_owner.id,
+                        user_id=self.sole_owner_id,
                         organization_id=org.id,
                         role=OrgMembershipRole.org_owner.value,
                     ),
                     OrganizationMembership(
-                        user_id=self.ws_admin.id,
+                        user_id=self.ws_admin_id,
                         organization_id=org.id,
                         role=OrgMembershipRole.member.value,
                     ),
                     OrganizationMembership(
-                        user_id=self.elevated_member.id,
+                        user_id=self.elevated_member_id,
                         organization_id=org.id,
                         role=OrgMembershipRole.member.value,
                     ),
                     WorkspaceMember(
-                        user_id=self.sole_owner.id,
+                        user_id=self.sole_owner_id,
                         workspace_id=general.id,
                         role=WorkspaceMemberRole.workspace_admin.value,
                     ),
                     WorkspaceMember(
-                        user_id=self.ws_admin.id,
+                        user_id=self.ws_admin_id,
                         workspace_id=extra.id,
                         role=WorkspaceMemberRole.workspace_admin.value,
                     ),
                     WorkspaceMember(
-                        user_id=self.elevated_member.id,
+                        user_id=self.elevated_member_id,
                         workspace_id=general.id,
                         role=WorkspaceMemberRole.workspace_admin.value,
                     ),
@@ -176,7 +180,7 @@ class MembershipUpsertGuardTests(unittest.TestCase):
                 db.query(OrganizationMembership.role)
                 .filter(
                     OrganizationMembership.organization_id == self.org_id,
-                    OrganizationMembership.user_id == self.sole_owner.id,
+                    OrganizationMembership.user_id == self.sole_owner_id,
                 )
                 .scalar()
             )
@@ -189,7 +193,7 @@ class MembershipUpsertGuardTests(unittest.TestCase):
         try:
             db.add(
                 OrganizationMembership(
-                    user_id=self.second_owner.id,
+                    user_id=self.second_owner_id,
                     organization_id=self.org_id,
                     role=OrgMembershipRole.org_owner.value,
                 )
@@ -223,7 +227,7 @@ class MembershipUpsertGuardTests(unittest.TestCase):
                 db.query(WorkspaceMember.role)
                 .filter(
                     WorkspaceMember.workspace_id == self.extra_id,
-                    WorkspaceMember.user_id == self.ws_admin.id,
+                    WorkspaceMember.user_id == self.ws_admin_id,
                 )
                 .scalar()
             )
@@ -247,7 +251,7 @@ class MembershipUpsertGuardTests(unittest.TestCase):
                 db.query(WorkspaceMember.role)
                 .filter(
                     WorkspaceMember.workspace_id == self.general_id,
-                    WorkspaceMember.user_id == self.elevated_member.id,
+                    WorkspaceMember.user_id == self.elevated_member_id,
                 )
                 .scalar()
             )
