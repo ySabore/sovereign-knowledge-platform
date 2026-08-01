@@ -211,8 +211,10 @@ def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_
                 role=desired_ws_role,
             )
         )
-    else:
-        ws_membership.role = desired_ws_role
+    elif org_role == OrgMembershipRole.org_owner.value:
+        # Promote org owners to workspace_admin; never silently demote an
+        # existing General workspace role when org membership is re-upserted.
+        ws_membership.role = WorkspaceMemberRole.workspace_admin.value
         db.add(ws_membership)
 
 
@@ -801,6 +803,12 @@ def upsert_organization_member(
         )
         db.add(membership)
     else:
+        if (
+            membership.role == OrgMembershipRole.org_owner.value
+            and normalized_role != OrgMembershipRole.org_owner.value
+            and _count_org_owners(db, org_id) <= 1
+        ):
+            raise HTTPException(status_code=409, detail="Cannot remove the last organization owner")
         membership.role = normalized_role
 
     _ensure_default_workspace_membership(db, org_id, target_user.id, normalized_role)
@@ -1169,6 +1177,12 @@ def upsert_workspace_member(
         )
         db.add(membership)
     else:
+        if (
+            membership.role == WorkspaceMemberRole.workspace_admin.value
+            and normalized_role != WorkspaceMemberRole.workspace_admin.value
+            and _count_workspace_admins(db, workspace_id) <= 1
+        ):
+            raise HTTPException(status_code=409, detail="Cannot remove the last workspace admin")
         membership.role = normalized_role
 
     db.flush()
