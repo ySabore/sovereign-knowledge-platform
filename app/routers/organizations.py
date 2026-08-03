@@ -182,12 +182,32 @@ def _issue_invite_token() -> tuple[str, str]:
     return token, token_hash
 
 
-def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_id: UUID, org_role: str) -> None:
-    default_ws = (
+def _resolve_default_workspace(db: Session, org_id: UUID) -> Workspace | None:
+    """
+    Resolve the org workspace used for invite / member provisioning.
+
+    Prefer the canonical "General" workspace (oldest if duplicates exist). Fall back to the
+    oldest workspace in the org so renaming/deleting "General" cannot silently strand new members
+    without any workspace membership.
+    """
+    named = (
         db.query(Workspace)
         .filter(Workspace.organization_id == org_id, Workspace.name == DEFAULT_WORKSPACE_NAME)
-        .one_or_none()
+        .order_by(Workspace.created_at.asc())
+        .first()
     )
+    if named is not None:
+        return named
+    return (
+        db.query(Workspace)
+        .filter(Workspace.organization_id == org_id)
+        .order_by(Workspace.created_at.asc())
+        .first()
+    )
+
+
+def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_id: UUID, org_role: str) -> None:
+    default_ws = _resolve_default_workspace(db, org_id)
     if default_ws is None:
         return
     desired_ws_role = (
@@ -1041,9 +1061,23 @@ def create_workspace(
     user: User = Depends(get_current_user),
 ) -> Workspace:
     _require_org_owner(db, org_id, user)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Workspace name is required")
+    if name == DEFAULT_WORKSPACE_NAME:
+        existing_general = (
+            db.query(Workspace)
+            .filter(Workspace.organization_id == org_id, Workspace.name == DEFAULT_WORKSPACE_NAME)
+            .first()
+        )
+        if existing_general is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'A workspace named "{DEFAULT_WORKSPACE_NAME}" already exists in this organization',
+            )
     ws = Workspace(
         organization_id=org_id,
-        name=body.name.strip(),
+        name=name,
         description=body.description.strip() if body.description else None,
         created_by=user.id,
     )
@@ -1196,7 +1230,30 @@ def update_workspace(
 ) -> Workspace:
     workspace = _require_workspace_admin(db, workspace_id, user)
     if body.name is not None:
-        workspace.name = body.name.strip()
+        new_name = body.name.strip()
+        if not new_name:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Workspace name is required")
+        if workspace.name == DEFAULT_WORKSPACE_NAME and new_name != DEFAULT_WORKSPACE_NAME:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'Cannot rename the default "{DEFAULT_WORKSPACE_NAME}" workspace; it is required for member provisioning',
+            )
+        if new_name == DEFAULT_WORKSPACE_NAME and workspace.name != DEFAULT_WORKSPACE_NAME:
+            existing_general = (
+                db.query(Workspace)
+                .filter(
+                    Workspace.organization_id == workspace.organization_id,
+                    Workspace.name == DEFAULT_WORKSPACE_NAME,
+                    Workspace.id != workspace.id,
+                )
+                .first()
+            )
+            if existing_general is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f'A workspace named "{DEFAULT_WORKSPACE_NAME}" already exists in this organization',
+                )
+        workspace.name = new_name
     if body.description is not None:
         workspace.description = body.description.strip() or None
     _write_audit_log(
@@ -1243,6 +1300,11 @@ def delete_workspace_endpoint(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete the last workspace in this organization",
+        )
+    if workspace.name == DEFAULT_WORKSPACE_NAME:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Cannot delete the default "{DEFAULT_WORKSPACE_NAME}" workspace; it is required for member provisioning',
         )
     _write_audit_log(
         db,
