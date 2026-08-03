@@ -81,7 +81,7 @@ def verify_clerk_session_jwt(token: str) -> dict:
     try:
         # Leeway avoids "token is not yet valid (iat)" when the API container clock is slightly behind Clerk / host
         # (common with Docker Desktop on Windows/WSL2).
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             signing_key.key,
             leeway=settings.clerk_jwt_leeway_seconds,
@@ -90,3 +90,13 @@ def verify_clerk_session_jwt(token: str) -> dict:
     except jwt.PyJWTError as exc:
         logger.debug("Clerk JWT verification failed: %s", exc)
         raise
+
+    # Clerk session tasks (setup-mfa, join an organization, etc.) issue otherwise-valid JWTs with
+    # sts=pending. Clerk SDKs treat those as signed-out by default; reject them here so first-factor
+    # credentials cannot bypass required MFA / session tasks against this API.
+    if claims.get("sts") == "pending":
+        raise jwt.InvalidTokenError(
+            "Clerk session is pending; complete required session tasks (for example MFA setup) "
+            "before accessing the API."
+        )
+    return claims
