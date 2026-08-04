@@ -143,6 +143,12 @@ def run_connector_sync(
                 except Exception as exc:
                     logger.exception("ingest failed for %s", doc.external_id)
                     errors.append(f"{doc.external_id}: {exc}")
+                    # DB errors (e.g. IntegrityError) abort the transaction; without rollback,
+                    # every subsequent ingest in this sync fails with PendingRollbackError.
+                    try:
+                        db.rollback()
+                    except Exception:
+                        logger.exception("rollback after ingest failure failed connector_id=%s", connector_row_id)
             batch_idx += 1
             if not cursor:
                 break
