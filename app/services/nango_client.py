@@ -660,6 +660,34 @@ def _fetch_github(
     return out, None
 
 
+def _jira_adf_to_text(node: Any) -> str:
+    """Flatten Jira Cloud ADF (or plain string bodies) into ingestible text."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        parts = [_jira_adf_to_text(item) for item in node]
+        return "\n".join(part for part in parts if part)
+    if isinstance(node, dict):
+        parts: list[str] = []
+        text = node.get("text")
+        if isinstance(text, str) and text:
+            parts.append(text)
+        content = node.get("content")
+        if content is not None:
+            nested = _jira_adf_to_text(content)
+            if nested:
+                parts.append(nested)
+        return "\n".join(parts)
+    return str(node)
+
+
+def _jira_body_to_text(body: Any) -> str:
+    """Normalize Jira issue/comment body fields (API v3 ADF or legacy strings)."""
+    return _jira_adf_to_text(body).strip()
+
+
 def _fetch_jira(
     connection_id: str,
     provider_config_key: str,
@@ -686,16 +714,17 @@ def _fetch_jira(
         key = issue.get("key") or ""
         fields = issue.get("fields") or {}
         summary = fields.get("summary") or ""
-        desc = fields.get("description")
-        desc_text = ""
-        if isinstance(desc, str):
-            desc_text = desc
-        elif isinstance(desc, dict):
-            desc_text = str(desc)
+        desc_text = _jira_body_to_text(fields.get("description"))
         comments = fields.get("comment") or {}
-        ctext = ""
-        for c in comments.get("comments") or []:
-            ctext += (c.get("body") or "") + "\n"
+        comment_rows = comments.get("comments") if isinstance(comments, dict) else None
+        ctext_parts: list[str] = []
+        for c in comment_rows or []:
+            if not isinstance(c, dict):
+                continue
+            comment_text = _jira_body_to_text(c.get("body"))
+            if comment_text:
+                ctext_parts.append(comment_text)
+        ctext = "\n".join(ctext_parts)
         text = clean_text_for_ingestion(f"{summary}\n\n{desc_text}\n\n{ctext}", strip_html=True)
         out.append(
             DocumentFetchResult(
