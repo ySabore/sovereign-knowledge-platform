@@ -63,6 +63,7 @@ from app.services.rag import resolve_top_k, run_retrieval_pipeline
 from app.services.rag.answer_parse import extract_confidence_tag
 from app.services.query_log import record_chat_turn_query_log
 from app.services.rate_limits import enforce_org_query_limits
+from app.services.org_status import ensure_organization_not_suspended
 from app.services.storage import cleanup_temp_extraction_file
 from app.services.workspace_access import resolve_workspace_for_user
 
@@ -119,6 +120,7 @@ def _require_session_for_user(db: Session, session_id: UUID, user: User) -> Chat
     session = db.get(ChatSession, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
+    ensure_organization_not_suspended(db, session.organization_id, user)
     if _is_org_owner(db, session.organization_id, user.id):
         return session
     session = (
@@ -293,6 +295,8 @@ def delete_chat_session(
     session = db.get(ChatSession, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
+    if not user.is_platform_owner:
+        ensure_organization_not_suspended(db, session.organization_id, user)
     if not _can_delete_chat_session(db, session, user):
         raise HTTPException(status_code=403, detail="Not allowed to delete this chat session")
     _write_audit_log(

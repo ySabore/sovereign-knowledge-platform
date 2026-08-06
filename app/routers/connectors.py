@@ -35,6 +35,7 @@ from app.services.nango_client import (
     sanitize_drive_folder_ids,
 )
 from app.services.metrics import list_connectors_for_org
+from app.services.org_status import ensure_organization_not_suspended
 from app.services.permissions import sync_permissions
 from app.services.rate_limits import enforce_connector_sync_limit
 from app.services.sync_orchestrator import enqueue_connector_sync_job
@@ -129,6 +130,8 @@ def _require_workspace_connector_manage_access(db: Session, org_id: UUID, worksp
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     if user.is_platform_owner:
         return ws
+    if ensure_organization_not_suspended(db, org_id, user) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return ws
@@ -348,6 +351,8 @@ def _require_connector_view_access(db: Session, org_id: UUID, user: User) -> Non
         if db.get(Organization, org_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
         return
+    if ensure_organization_not_suspended(db, org_id, user) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return
@@ -367,6 +372,8 @@ def _require_connector_manage_access(db: Session, org_id: UUID, user: User) -> N
         if db.get(Organization, org_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
         return
+    if ensure_organization_not_suspended(db, org_id, user) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     role = _org_membership_role(db, org_id, user.id)
     if role == OrgMembershipRole.org_owner.value:
         return

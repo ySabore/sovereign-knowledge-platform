@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models import OrganizationMembership, OrgMembershipRole, User, Workspace, WorkspaceMember
+from app.services.org_status import ensure_organization_not_suspended
 
 
 def resolve_workspace_for_user(db: Session, workspace_id: UUID, user: User) -> Workspace | None:
@@ -15,12 +16,14 @@ def resolve_workspace_for_user(db: Session, workspace_id: UUID, user: User) -> W
 
     - Platform owners: any workspace by id.
     - Otherwise: workspace member, or org owner for the workspace's organization.
+    - Suspended organizations are denied for non-platform users.
     """
     if user.is_platform_owner:
         return db.get(Workspace, workspace_id)
     ws = db.get(Workspace, workspace_id)
     if ws is None:
         return None
+    ensure_organization_not_suspended(db, ws.organization_id, user)
     in_ws = (
         db.query(WorkspaceMember)
         .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id)

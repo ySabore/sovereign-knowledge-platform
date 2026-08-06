@@ -295,6 +295,7 @@ export function OrganizationsPanel({
                       Boolean(user?.org_ids_as_owner?.includes(selectedOrgId))
                     }
                     showDangerZone={!!user?.is_platform_owner}
+                    canManageOrgStatus={!!user?.is_platform_owner}
                     onSaved={(updated) => {
                       setOrgs((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
                     }}

@@ -32,6 +32,7 @@ from app.services.billing import ensure_seat_available, get_plan_entitlements
 from app.services.metrics import list_audit_events_for_org, list_documents_for_org
 from app.services.field_encryption import encrypt_org_secret
 from app.services.invite_email import send_organization_invite_email
+from app.services.org_status import ensure_organization_not_suspended
 from app.services.resource_cleanup import delete_organization_cascade, delete_workspace_cascade
 from app.services.rate_limits import enforce_privileged_read_api_limit
 from app.services.workspace_access import resolve_workspace_for_user
@@ -111,9 +112,11 @@ def _require_org_membership(
     """
     Require org membership, or (for the signed-in platform owner only) allow access to any org that exists.
     Use allow_platform_owner_bypass=False when validating another user (e.g. workspace invitee) who must be a member.
+    Suspended organizations are denied for non-platform users.
     """
     membership = _get_org_membership(db, org_id, user.id)
     if membership is not None:
+        ensure_organization_not_suspended(db, org_id, user)
         return membership
     if allow_platform_owner_bypass and user.is_platform_owner:
         org = db.get(Organization, org_id)
@@ -639,6 +642,9 @@ def accept_organization_invite(
             status_code=403,
             detail=f"Invite is for {invite.email}, but you are signed in as {user.email}. Sign in with the invited email and try again.",
         )
+    org = ensure_organization_not_suspended(db, invite.organization_id, user)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
 
     membership = _get_org_membership(db, invite.organization_id, user.id)
     if membership is None:
@@ -749,6 +755,10 @@ def list_organization_audit(
             raise HTTPException(status_code=403, detail="Workspace admin or org owner role required")
         if workspace_id is not None and workspace_id not in workspace_scope_ids:
             raise HTTPException(status_code=403, detail="Not allowed to view audit for this workspace")
+    if membership is not None or workspace_scope_ids:
+        ensure_organization_not_suspended(db, org_id, user)
+    elif not user.is_platform_owner:
+        raise HTTPException(status_code=403, detail="Workspace admin or org owner role required")
     enforce_privileged_read_api_limit(request, user)
     return list_audit_events_for_org(
         db,
@@ -837,6 +847,11 @@ def update_organization(
     if "name" in patch and patch["name"] is not None:
         org.name = patch["name"].strip()
     if "status" in patch and patch["status"] is not None:
+        if not user.is_platform_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only platform owners can change organization status",
+            )
         normalized_status = patch["status"].strip().lower()
         allowed_statuses = {status.value for status in OrgStatus}
         if normalized_status not in allowed_statuses:
@@ -981,10 +996,9 @@ def delete_organization_endpoint(
         description="Must match the organization URL slug (case-insensitive). Deletes all workspaces, documents, chats, and connectors under this org.",
     ),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_platform_owner),
 ) -> None:
-    """Org owners and platform owners. Removes stored PDF files, then deletes the org row (DB CASCADE for related data)."""
-    _require_org_owner(db, org_id, user)
+    """Platform owners only. Removes stored PDF files, then deletes the org row (DB CASCADE for related data)."""
     org = db.get(Organization, org_id)
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
@@ -1092,17 +1106,19 @@ def list_my_workspaces(
         return list(rows)
     rows = (
         db.query(Workspace)
+        .join(Organization, Organization.id == Workspace.organization_id)
         .outerjoin(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
         .outerjoin(
             OrganizationMembership,
             OrganizationMembership.organization_id == Workspace.organization_id,
         )
         .filter(
+            Organization.status != OrgStatus.suspended.value,
             (WorkspaceMember.user_id == user.id)
             | (
                 (OrganizationMembership.user_id == user.id)
                 & (OrganizationMembership.role == OrgMembershipRole.org_owner.value)
-            )
+            ),
         )
         .distinct()
         .order_by(Workspace.created_at.asc())
