@@ -67,8 +67,14 @@ async def _iter_ollama_token_stream(
     *,
     conversation_turns: list[tuple[str, str]] | None = None,
     org: Organization | None = None,
+    hit_contents: list[str] | None = None,
 ) -> AsyncIterator[str]:
-    prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+    prompt = _grounded_prompt_text(
+        query,
+        citations,
+        conversation_turns=conversation_turns,
+        hit_contents=hit_contents,
+    )
 
     url = f"{ollama_base_url_for_org(org)}/api/generate"
     model = preferred_chat_model_from_org(org) or settings.answer_generation_model
@@ -124,7 +130,7 @@ async def _yield_post_generative_stream(
             full_text = policy_fix[0]
             cits = [c.to_dict() for c in citations]
         else:
-            full_text, cits = _generate_extractive_answer(query, citations)
+            full_text, cits = _generate_extractive_answer(query, citations, hit_contents=hit_contents)
         yield {"kind": "token", "text": "\n\n"}
         for chunk in _token_chunks(full_text):
             yield {"kind": "token", "text": chunk}
@@ -145,7 +151,7 @@ async def _yield_post_generative_stream(
             full_text = policy_fix[0]
             cits = [c.to_dict() for c in citations]
         else:
-            full_text, cits = _generate_extractive_answer(query, citations)
+            full_text, cits = _generate_extractive_answer(query, citations, hit_contents=hit_contents)
         yield {"kind": "token", "text": "\n\n"}
         for chunk in _token_chunks(full_text):
             yield {"kind": "token", "text": chunk}
@@ -242,7 +248,7 @@ async def stream_grounded_answer_events(
         }
         return
     if provider == "extractive":
-        full_text, cits = _generate_extractive_answer(query, citations)
+        full_text, cits = _generate_extractive_answer(query, citations, hit_contents=hit_contents)
         for chunk in _token_chunks(full_text):
             yield {"kind": "token", "text": chunk}
         yield {
@@ -261,7 +267,11 @@ async def stream_grounded_answer_events(
         pieces: list[str] = []
         try:
             async for piece in _iter_ollama_token_stream(
-                query, citations, conversation_turns=conversation_turns, org=org
+                query,
+                citations,
+                conversation_turns=conversation_turns,
+                org=org,
+                hit_contents=hit_contents,
             ):
                 pieces.append(piece)
                 yield {"kind": "token", "text": piece}
@@ -288,7 +298,12 @@ async def stream_grounded_answer_events(
             api_key, model, base = resolve_openai_for_org(org)
         except RuntimeError as exc:
             raise AnswerGenerationError(str(exc)) from exc
-        prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+        prompt = _grounded_prompt_text(
+            query,
+            citations,
+            conversation_turns=conversation_turns,
+            hit_contents=hit_contents,
+        )
         try:
             async for piece in stream_openai_chat_tokens(
                 api_key=api_key, base_url=base, model=model, user_prompt=prompt
@@ -318,7 +333,12 @@ async def stream_grounded_answer_events(
             api_key, model, base = resolve_anthropic_for_org(org)
         except RuntimeError as exc:
             raise AnswerGenerationError(str(exc)) from exc
-        prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+        prompt = _grounded_prompt_text(
+            query,
+            citations,
+            conversation_turns=conversation_turns,
+            hit_contents=hit_contents,
+        )
         try:
             async for piece in stream_anthropic_chat_tokens(
                 api_key=api_key, base_url=base, model=model, user_prompt=prompt

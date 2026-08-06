@@ -59,6 +59,46 @@ class ChatServiceTests(unittest.TestCase):
         self.assertIn("[1] evidence.pdf, page 1: Grounded evidence", answer)
         self.assertEqual(len(citations), 2)
 
+    def test_extractive_answer_keeps_full_chunk_not_citation_quote_cap(self) -> None:
+        """Regression: answer evidence must use full hit.content, not 400-char display quotes."""
+        # Put query-matching tokens at the front so the focus window stays early;
+        # place a late fact that does not share those query tokens (so the UI quote misses it).
+        head = "retention clause overview. " + ("padding " * 60)
+        unique_fact = "ARCHIVE_DURATION_EQUALS_2555_DAYS"
+        long_content = f"{head}{unique_fact}"
+        self.assertGreater(len(long_content), 500)
+
+        with patch("app.services.chat.settings.answer_generation_provider", "extractive"), patch(
+            "app.services.chat.settings.chat_citation_quote_max_chars", 400
+        ):
+            answer, citations, _mode = generate_grounded_answer(
+                "What is the retention clause?",
+                [self._hit(content=long_content)],
+            )
+
+        self.assertIn(unique_fact, answer)
+        self.assertEqual(len(citations), 1)
+        # Client-facing citation quote may still truncate for UI.
+        self.assertLessEqual(len(citations[0]["quote"]), 401)
+        self.assertNotIn(unique_fact, citations[0]["quote"])
+
+    def test_grounded_prompt_includes_full_chunk_beyond_quote_cap(self) -> None:
+        from app.services.chat import _grounded_prompt_text, build_citations_for_query
+
+        head = "indemnity cap overview. " + ("padding " * 60)
+        unique_fact = "LIABILITY_CEILING_EQUALS_2000000_USD"
+        long_content = f"{head}{unique_fact}"
+        hit = self._hit(content=long_content)
+        with patch("app.services.chat.settings.chat_citation_quote_max_chars", 400):
+            citations = build_citations_for_query([hit], query="indemnity cap")
+        prompt = _grounded_prompt_text(
+            "What is the indemnity cap?",
+            citations,
+            hit_contents=[long_content],
+        )
+        self.assertIn(unique_fact, prompt)
+        self.assertNotIn(unique_fact, citations[0].quote)
+
     def test_ollama_answers_without_inline_citations_fall_back_to_extractive_output(self) -> None:
         fake_response = SimpleNamespace(
             raise_for_status=lambda: None,
