@@ -158,12 +158,15 @@ export function OrganizationSettingsPanel({
   showDangerZone,
   onOrgDeleted,
   canManageCloudCredentials,
+  canManageOrgStatus,
 }: {
   org: Org;
   onSaved: (org: Org) => void;
   showDangerZone?: boolean;
   onOrgDeleted?: () => void | Promise<void>;
   canManageCloudCredentials?: boolean;
+  /** Platform owners only — suspend/reactivate organizations. */
+  canManageOrgStatus?: boolean;
 }) {
   const C = useOrgShellTokens();
   const [name, setName] = useState(org.name);
@@ -401,7 +404,6 @@ export function OrganizationSettingsPanel({
       }
       const patch: Record<string, unknown> = {
         name: name.trim(),
-        status: status.trim().toLowerCase(),
         description: description.trim() || null,
         preferred_chat_provider: chatProv === "" ? null : chatProv,
         preferred_chat_model: chatModel.trim() || null,
@@ -410,6 +412,9 @@ export function OrganizationSettingsPanel({
         use_hosted_rerank: useHostedRerank,
         allowed_connector_ids: allowedConnectorIds.length > 0 ? allowedConnectorIds : null,
       };
+      if (canManageOrgStatus) {
+        patch.status = status.trim().toLowerCase();
+      }
       if (canManageCloudCredentials) {
         if (clearOpenaiKey) patch.openai_api_key = null;
         else if (openaiKeyDraft.trim()) patch.openai_api_key = openaiKeyDraft.trim();
@@ -458,10 +463,14 @@ export function OrganizationSettingsPanel({
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>
               Status
             </div>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-            </select>
+            {canManageOrgStatus ? (
+              <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+              </select>
+            ) : (
+              <div style={{ fontSize: 12, color: C.t2, fontFamily: C.mono }}>{org.status}</div>
+            )}
           </div>
           <div>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 6 }}>

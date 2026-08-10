@@ -115,7 +115,7 @@ class Citation:
         }
 
 
-def build_citations(hits: list[RetrievalHit], *, limit: int = 3) -> list[Citation]:
+def build_citations(hits: list[RetrievalHit], *, limit: int | None = None) -> list[Citation]:
     return build_citations_for_query(hits, query="", limit=limit)
 
 
@@ -174,10 +174,19 @@ def _citation_focus_quote(content: str, *, query: str, max_chars: int) -> str:
     return snippet
 
 
-def build_citations_for_query(hits: list[RetrievalHit], *, query: str, limit: int = 3) -> list[Citation]:
+def build_citations_for_query(
+    hits: list[RetrievalHit], *, query: str, limit: int | None = None
+) -> list[Citation]:
+    """Build client-facing citations.
+
+    ``Citation.quote`` is truncated for UI display only. Generative/extractive answer
+    paths must use full ``RetrievalHit.content`` (via ``hit_contents``) so retrieved
+    evidence is not silently dropped by ``chat_citation_quote_max_chars``.
+    """
     citations: list[Citation] = []
     max_chars = settings.chat_citation_quote_max_chars
-    for hit in hits[:limit]:
+    selected = hits if limit is None else hits[: max(0, limit)]
+    for hit in selected:
         citations.append(
             Citation(
                 chunk_id=str(hit.chunk_id),
@@ -190,6 +199,17 @@ def build_citations_for_query(hits: list[RetrievalHit], *, query: str, limit: in
             )
         )
     return citations
+
+
+def _evidence_body_for_citation(
+    citation: Citation, *, index: int, hit_contents: list[str] | None
+) -> str:
+    """Prefer full retrieved chunk text; fall back to the display quote."""
+    if hit_contents is not None and 0 <= index < len(hit_contents):
+        body = (hit_contents[index] or "").strip()
+        if body:
+            return body
+    return citation.quote or ""
 
 
 def has_sufficient_evidence(hits: list[RetrievalHit], *, query: str = "") -> bool:
@@ -251,14 +271,15 @@ def _grounded_prompt_text(
     citations: list[Citation],
     *,
     conversation_turns: list[tuple[str, str]] | None = None,
+    hit_contents: list[str] | None = None,
 ) -> str:
     payload = [
         (
             citation.document_filename,
             str(citation.page_number) if citation.page_number is not None else None,
-            citation.quote,
+            _evidence_body_for_citation(citation, index=idx, hit_contents=hit_contents),
         )
-        for citation in citations
+        for idx, citation in enumerate(citations)
     ]
     evidence_lines = format_evidence_lines_for_prompt(payload)
     return build_ollama_grounded_prompt(
@@ -290,13 +311,13 @@ def _finalize_generative_answer(
     if not refs_ok:
         if policy_fix is not None:
             return policy_fix[0], [citation.to_dict() for citation in citations], fallback_mode
-        answer, cits = _generate_extractive_answer(query, citations)
+        answer, cits = _generate_extractive_answer(query, citations, hit_contents=blobs)
         return answer, cits, fallback_mode
     if _likely_permission_contradiction(query=query, answer=display, citations=citations):
         if policy_fix is not None:
             return policy_fix[0], [citation.to_dict() for citation in citations], fallback_mode
         # Deterministic corrective fallback when the model contradicts explicit policy language.
-        answer, cits = _generate_extractive_answer(query, citations)
+        answer, cits = _generate_extractive_answer(query, citations, hit_contents=blobs)
         return answer, cits, fallback_mode
     cap_override = _deterministic_cap_answer_override(query, display, policy_fix)
     if cap_override is not None:
@@ -332,7 +353,7 @@ def generate_grounded_answer(
         )
         return role_scope, [citation.to_dict() for citation in citations], short_mode
     if provider == "extractive":
-        answer, cits = _generate_extractive_answer(query, citations)
+        answer, cits = _generate_extractive_answer(query, citations, hit_contents=hit_contents)
         return answer, cits, "extractive"
     if provider == "ollama":
         return _generate_ollama_answer(
@@ -361,13 +382,16 @@ def generate_grounded_answer(
     raise AnswerGenerationError(f"Unsupported answer generation provider: {provider}")
 
 
-def _generate_extractive_answer(query: str, citations: list[Citation]) -> tuple[str, list[dict[str, str | int | float | None]]]:
+def _generate_extractive_answer(
+    query: str,
+    citations: list[Citation],
+    hit_contents: list[str] | None = None,
+) -> tuple[str, list[dict[str, str | int | float | None]]]:
     bullets: list[str] = []
     for idx, citation in enumerate(citations, start=1):
         page = f", page {citation.page_number}" if citation.page_number is not None else ""
-        bullets.append(
-            f"[{idx}] {citation.document_filename}{page}: {citation.quote}"
-        )
+        body = _evidence_body_for_citation(citation, index=idx - 1, hit_contents=hit_contents)
+        bullets.append(f"[{idx}] {citation.document_filename}{page}: {body}")
 
     answer = (
         f"Answer grounded in retrieved workspace documents for: {query}\n"
@@ -384,7 +408,12 @@ def _generate_ollama_answer(
     org: Organization | None = None,
     hit_contents: list[str] | None = None,
 ) -> tuple[str, list[dict[str, str | int | float | None]], GenerationMode]:
-    prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+    prompt = _grounded_prompt_text(
+        query,
+        citations,
+        conversation_turns=conversation_turns,
+        hit_contents=hit_contents,
+    )
     model = preferred_chat_model_from_org(org) or settings.answer_generation_model
     try:
         response = httpx.post(
@@ -424,7 +453,12 @@ def _generate_openai_answer(
         api_key, _model, base = resolve_openai_for_org(org)
     except RuntimeError as exc:
         raise AnswerGenerationError(str(exc)) from exc
-    prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+    prompt = _grounded_prompt_text(
+        query,
+        citations,
+        conversation_turns=conversation_turns,
+        hit_contents=hit_contents,
+    )
     try:
         answer = complete_openai_chat(api_key=api_key, base_url=base, model=_model, user_prompt=prompt)
     except RuntimeError as exc:
@@ -451,7 +485,12 @@ def _generate_anthropic_answer(
         api_key, _model, base = resolve_anthropic_for_org(org)
     except RuntimeError as exc:
         raise AnswerGenerationError(str(exc)) from exc
-    prompt = _grounded_prompt_text(query, citations, conversation_turns=conversation_turns)
+    prompt = _grounded_prompt_text(
+        query,
+        citations,
+        conversation_turns=conversation_turns,
+        hit_contents=hit_contents,
+    )
     try:
         answer = complete_anthropic_chat(api_key=api_key, base_url=base, model=_model, user_prompt=prompt)
     except RuntimeError as exc:
