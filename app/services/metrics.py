@@ -237,13 +237,12 @@ def list_documents_for_org(
         .group_by(DocumentChunk.document_id)
         .subquery()
     )
+    # Apply filters before limit/offset — SQLAlchemy 2.x rejects Query.filter() after limit().
     qry = (
         db.query(Document, Workspace.name.label("workspace_name"), chunk_count_subq.c.chunk_count)
         .join(Workspace, Workspace.id == Document.workspace_id)
         .outerjoin(chunk_count_subq, chunk_count_subq.c.doc_id == Document.id)
         .filter(Document.organization_id == organization_id)
-        .order_by(Document.updated_at.desc())
-        .limit(max(1, min(limit, 1000)))
     )
     if workspace_id is not None:
         qry = qry.filter(Document.workspace_id == workspace_id)
@@ -255,6 +254,7 @@ def list_documents_for_org(
                 func.coalesce(Document.source_type, "").ilike(like),
             )
         )
+    qry = qry.order_by(Document.updated_at.desc()).limit(max(1, min(limit, 1000)))
     out: list[dict[str, Any]] = []
     for doc, ws_name, chunk_count in qry.all():
         out.append(
