@@ -3031,6 +3031,7 @@ function HomePageContent({
     selectedOrgId,
     scopedWorkspaces,
     isPlatformOwner,
+    memberChatOnly: isMemberOnlyUser,
     panel,
     setPanel,
   });

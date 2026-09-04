@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { buildNavGroups, getNavLockState } from "../src/features/home-shell/useHomeNavState";
+import { shouldRedirectEmptyOrgToDocs } from "../src/features/home-shell/useOrgKnowledgeGate";
 
 test("buildNavGroups includes platform section for platform owner", () => {
   const groups = buildNavGroups(true, true, true, true, "DASH");
@@ -24,4 +25,50 @@ test("getNavLockState marks knowledge panel as locked when no indexed docs", () 
   expect(lock.knowledgeLocked).toBe(true);
   expect(lock.navDisabled).toBe(true);
   expect(lock.title).toContain("Index at least one document");
+});
+
+test("empty-org knowledge gate still sends admins from chats to documents", () => {
+  expect(
+    shouldRedirectEmptyOrgToDocs({
+      isPlatformOwner: false,
+      memberChatOnly: false,
+      orgHasIndexedDocuments: false,
+      panel: "chats",
+      selectedOrgId: "org-123",
+    }),
+  ).toBe(true);
+});
+
+test("empty-org knowledge gate does not fight member chat-first landing", () => {
+  expect(
+    shouldRedirectEmptyOrgToDocs({
+      isPlatformOwner: false,
+      memberChatOnly: true,
+      orgHasIndexedDocuments: false,
+      panel: "chats",
+      selectedOrgId: "org-123",
+    }),
+  ).toBe(false);
+});
+
+test("member chat-first and empty-org knowledge gate settle on chats", () => {
+  let panel: "chats" | "docs" | "team" = "chats";
+  const sequence: typeof panel[] = [];
+  for (let i = 0; i < 6; i++) {
+    if (
+      shouldRedirectEmptyOrgToDocs({
+        isPlatformOwner: false,
+        memberChatOnly: true,
+        orgHasIndexedDocuments: false,
+        panel,
+        selectedOrgId: "org-123",
+      })
+    ) {
+      panel = "docs";
+    } else if (panel !== "chats") {
+      panel = "chats";
+    }
+    sequence.push(panel);
+  }
+  expect(sequence).toEqual(["chats", "chats", "chats", "chats", "chats", "chats"]);
 });
