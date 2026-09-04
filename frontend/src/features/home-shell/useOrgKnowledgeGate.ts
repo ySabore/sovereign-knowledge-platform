@@ -9,15 +9,40 @@ type UseOrgKnowledgeGateArgs = {
   selectedOrgId: string;
   scopedWorkspaces: Workspace[];
   isPlatformOwner: boolean;
+  memberChatOnly?: boolean;
   panel: Panel;
   setPanel: (panel: Panel) => void;
 };
+
+export function shouldRedirectEmptyOrgToDocs({
+  isPlatformOwner,
+  memberChatOnly,
+  orgHasIndexedDocuments,
+  panel,
+  selectedOrgId,
+}: {
+  isPlatformOwner: boolean;
+  memberChatOnly: boolean;
+  orgHasIndexedDocuments: boolean | null;
+  panel: Panel;
+  selectedOrgId: string;
+}): boolean {
+  if (isPlatformOwner) return false;
+  // Chat-first members/editors have no Documents nav. Redirecting them to docs
+  // fights HomePage's member `setPanel("chats")` effect and infinite-loops.
+  if (memberChatOnly) return false;
+  if (orgHasIndexedDocuments !== false) return false;
+  if (panel !== "chats" && panel !== "team") return false;
+  if (!selectedOrgId) return false;
+  return true;
+}
 
 export function useOrgKnowledgeGate({
   api,
   selectedOrgId,
   scopedWorkspaces,
   isPlatformOwner,
+  memberChatOnly = false,
   panel,
   setPanel,
 }: UseOrgKnowledgeGateArgs) {
@@ -50,12 +75,19 @@ export function useOrgKnowledgeGate({
   }, [api, selectedOrgId, scopedWorkspaces]);
 
   useEffect(() => {
-    if (isPlatformOwner) return;
-    if (orgHasIndexedDocuments !== false) return;
-    if (panel !== "chats" && panel !== "team") return;
-    if (!selectedOrgId) return;
+    if (
+      !shouldRedirectEmptyOrgToDocs({
+        isPlatformOwner,
+        memberChatOnly,
+        orgHasIndexedDocuments,
+        panel,
+        selectedOrgId,
+      })
+    ) {
+      return;
+    }
     setPanel("docs");
-  }, [orgHasIndexedDocuments, panel, selectedOrgId, isPlatformOwner, setPanel]);
+  }, [orgHasIndexedDocuments, panel, selectedOrgId, isPlatformOwner, memberChatOnly, setPanel]);
 
   return { orgHasIndexedDocuments };
 }
