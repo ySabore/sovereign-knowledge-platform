@@ -182,6 +182,28 @@ def _issue_invite_token() -> tuple[str, str]:
     return token, token_hash
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _revoke_pending_invites_for_email(db: Session, org_id: UUID, email: str) -> int:
+    """Invalidate unused invite links after a user is added or updated via PUT."""
+    pending = (
+        db.query(OrganizationInvite)
+        .filter(
+            OrganizationInvite.organization_id == org_id,
+            OrganizationInvite.email == email.strip().lower(),
+            OrganizationInvite.status == "pending",
+        )
+        .all()
+    )
+    for invite in pending:
+        invite.status = "revoked"
+    return len(pending)
+
+
 def _ensure_default_workspace_membership(db: Session, org_id: UUID, target_user_id: UUID, org_role: str) -> None:
     default_ws = (
         db.query(Workspace)
@@ -630,7 +652,7 @@ def accept_organization_invite(
         raise HTTPException(status_code=404, detail="Invite not found or already used")
 
     now = datetime.now(timezone.utc)
-    if invite.expires_at < now:
+    if _as_utc(invite.expires_at) < now:
         invite.status = "expired"
         db.commit()
         raise HTTPException(status_code=410, detail="Invite has expired")
@@ -649,9 +671,10 @@ def accept_organization_invite(
             role=invite.role,
         )
         db.add(membership)
-    else:
-        membership.role = invite.role
-    _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
+        _ensure_default_workspace_membership(db, invite.organization_id, user.id, membership.role)
+    # Already a member (typically added via PUT while this invite was still pending).
+    # Invites are join tokens, not role writes — never clobber an elevated role,
+    # which can leave the organization with zero org_owner rows.
 
     invite.status = "accepted"
     invite.accepted_by_user_id = user.id
@@ -804,6 +827,7 @@ def upsert_organization_member(
         membership.role = normalized_role
 
     _ensure_default_workspace_membership(db, org_id, target_user.id, normalized_role)
+    revoked_invites = _revoke_pending_invites_for_email(db, org_id, target_user.email)
 
     db.flush()
     _write_audit_log(
@@ -813,7 +837,12 @@ def upsert_organization_member(
         target_type="organization_membership",
         target_id=membership.id,
         organization_id=org_id,
-        metadata={"member_user_id": str(target_user.id), "email": target_user.email, "role": normalized_role},
+        metadata={
+            "member_user_id": str(target_user.id),
+            "email": target_user.email,
+            "role": normalized_role,
+            "revoked_pending_invites": revoked_invites,
+        },
     )
     db.commit()
     db.refresh(membership)
