@@ -6,6 +6,7 @@ import { ChatSourcesPanel } from "../../components/chat/ChatSourcesPanel";
 import { useAuth } from "../../context/AuthContext";
 import type { Citation, SseChatEvent } from "../../lib/chatSse";
 import { streamChatSse } from "../../lib/chatSse";
+import { resolveChatHistorySessionId } from "../../lib/chatHistorySession";
 import { ensureFreshClerkTokenIfNeeded } from "../../lib/clerkTokenBridge";
 import {
   DEFAULT_CHAT_SUGGESTIONS,
@@ -413,14 +414,21 @@ export function DashboardPage({
 
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
+  const messagesLoadGenRef = useRef(0);
 
-  const loadMessages = useCallback(async () => {
-    const sid = activeSessionId;
+  const loadMessages = useCallback(async (sessionId?: string | null) => {
+    const sid = resolveChatHistorySessionId({
+      explicitId: sessionId,
+      liveId: activeSessionIdRef.current,
+    });
     if (!sid) {
+      messagesLoadGenRef.current += 1;
       setMessages([]);
       return;
     }
+    const gen = ++messagesLoadGenRef.current;
     const { data } = await api.get<{ messages: ChatMessage[] }>(`/chat/sessions/${sid}`);
+    if (gen !== messagesLoadGenRef.current) return;
     if (activeSessionIdRef.current !== sid) return;
     setMessages(data.messages);
     const feedbackFromHistory: Record<string, "up" | "down" | undefined> = {};
@@ -468,7 +476,7 @@ export function DashboardPage({
         });
       });
     });
-  }, [activeSessionId]);
+  }, []);
 
   useEffect(() => {
     loadWorkspaces().catch((e) => setErr(apiErrorMessage(e)));
@@ -482,8 +490,9 @@ export function DashboardPage({
   }, [workspaceId, loadSessions]);
 
   useEffect(() => {
+    if (streaming) return;
     loadMessages().catch((e) => setErr(apiErrorMessage(e)));
-  }, [activeSessionId, loadMessages]);
+  }, [activeSessionId, loadMessages, streaming]);
 
   /**
    * Default the scroller to the latest message (bottom). `.skc-messages` is the scroll root (flex:1 + min-height:0).
@@ -603,7 +612,7 @@ export function DashboardPage({
       setErr(apiErrorMessage(e));
     } finally {
       setStreaming(false);
-      await loadMessages().catch(() => {});
+      await loadMessages(sid).catch(() => {});
       await loadSessions(false).catch(() => {});
     }
   };

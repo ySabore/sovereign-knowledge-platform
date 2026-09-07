@@ -9,7 +9,7 @@
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview",
     "lint": "npm run typecheck",
-    "test:logic": "playwright test e2e/nav-state.logic.spec.ts e2e/home-topbar-labels.logic.spec.ts",
+    "test:logic": "playwright test e2e/nav-state.logic.spec.ts e2e/home-topbar-labels.logic.spec.ts e2e/chat-history-session.logic.spec.ts",
     "verify:readiness": "npm run typecheck && npm run build && npm run test:logic"
   },
   "dependencies": {
